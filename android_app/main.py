@@ -51,7 +51,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.0.6'
+APP_VERSION = '2.0.7'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -419,6 +419,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS cafeterias(id INTEGER PRIMARY KEY, provider TEXT NOT NULL, name TEXT NOT NULL, remote_path TEXT, is_primary INTEGER DEFAULT 0, created_at TEXT);
         CREATE TABLE IF NOT EXISTS cafeteria_menus(cafeteria_id INTEGER NOT NULL, menu_date TEXT NOT NULL, breakfast TEXT, lunch TEXT, dinner TEXT, synced_at TEXT, PRIMARY KEY(cafeteria_id, menu_date));
         CREATE TABLE IF NOT EXISTS cafeteria_selections(meal_date TEXT, meal_type TEXT, title TEXT, calories REAL, protein REAL, carbs REAL, source TEXT DEFAULT 'cafeteria', PRIMARY KEY(meal_date, meal_type));
+        CREATE TABLE IF NOT EXISTS cafeteria_takeout_selections(meal_date TEXT NOT NULL, meal_type TEXT NOT NULL, title TEXT NOT NULL, calories REAL, protein REAL, carbs REAL, PRIMARY KEY(meal_date, meal_type, title));
         """)
         self._ensure_column('body', 'heart_rate', 'INTEGER')
         self._ensure_column('body', 'sleep_hours', 'REAL')
@@ -470,6 +471,12 @@ class Store:
         if not self.conn.execute("SELECT 1 FROM app_migrations WHERE name='welstory_public_refresh_205'").fetchone():
             self.conn.execute("DELETE FROM cafeteria_menus WHERE cafeteria_id IN (SELECT id FROM cafeterias WHERE provider='welstory')")
             self.conn.execute("INSERT INTO app_migrations(name) VALUES('welstory_public_refresh_205')")
+            self.conn.commit()
+        # Version 2.0.7 preserves the full published list so non-counter
+        # items can be exposed below the primary counters as 테이크아웃.
+        if not self.conn.execute("SELECT 1 FROM app_migrations WHERE name='welstory_takeout_refresh_207'").fetchone():
+            self.conn.execute("DELETE FROM cafeteria_menus WHERE cafeteria_id IN (SELECT id FROM cafeterias WHERE provider='welstory')")
+            self.conn.execute("INSERT INTO app_migrations(name) VALUES('welstory_takeout_refresh_207')")
             self.conn.commit()
         self.conn.executemany("INSERT OR IGNORE INTO foods(name,category,calories,protein,carbs,fat,serving) VALUES(?,?,?,?,?,?,?)", FOODS)
         # Meal sets are personal presets. Foods are seeded as a library, while
@@ -696,6 +703,8 @@ class Store:
         ).fetchone()
         if (completed_selection and completed_selection['completed']) or (completed_plan and completed_plan['completed']):
             return None
+        # A main counter replaces any takeout combination for that meal.
+        self.conn.execute('DELETE FROM cafeteria_takeout_selections WHERE meal_date=? AND meal_type=?', (today, meal_type))
         nutrition = nutrition or {}
         calories, protein, carbs = (nutrition.get(k) for k in ('calories','protein','carbs'))
         self.conn.execute('INSERT OR REPLACE INTO cafeteria_selections(meal_date,meal_type,title,calories,protein,carbs,source) VALUES(?,?,?,?,?,?,?)', (today, meal_type, title, calories, protein, carbs, 'cafeteria'))
@@ -726,6 +735,56 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def takeout_choices(self, meal_type):
+        return [dict(row) for row in self.conn.execute(
+            'SELECT * FROM cafeteria_takeout_selections WHERE meal_date=? AND meal_type=? ORDER BY title',
+            (date.today().isoformat(), meal_type),
+        )]
+
+    def _sync_takeout_summary(self, meal_type):
+        """Mirror the individually selected takeout foods into today's meal.
+
+        The detail rows remain separate for reversible teal selections while
+        the existing meal/completion/Health Connect pipeline receives one
+        summed cafeteria row.
+        """
+        today = date.today().isoformat()
+        rows = self.takeout_choices(meal_type)
+        if not rows:
+            self.conn.execute('DELETE FROM cafeteria_selections WHERE meal_date=? AND meal_type=?', (today, meal_type))
+            self.conn.commit()
+            return False
+        title = ' · '.join(row['title'] for row in rows)
+        calories = sum(float(row['calories'] or 0) for row in rows)
+        protein = sum(float(row['protein'] or 0) for row in rows)
+        carbs = sum(float(row['carbs'] or 0) for row in rows)
+        self.conn.execute('''INSERT OR REPLACE INTO cafeteria_selections
+            (meal_date,meal_type,title,calories,protein,carbs,source,completed)
+            VALUES(?,?,?,?,?,?,?,0)''', (today, meal_type, title, round(calories), round(protein, 1), round(carbs, 1), 'takeout'))
+        self.conn.commit()
+        return True
+
+    def toggle_takeout_choice(self, meal_type, title, nutrition=None):
+        today = date.today().isoformat()
+        current = self.conn.execute('SELECT completed FROM cafeteria_selections WHERE meal_date=? AND meal_type=?', (today, meal_type)).fetchone()
+        # Completed meals are intentionally locked until the meal card is
+        # reopened, exactly like a main-counter selection.
+        if current and bool(current['completed']):
+            return None
+        existing = self.conn.execute('SELECT 1 FROM cafeteria_takeout_selections WHERE meal_date=? AND meal_type=? AND title=?', (today, meal_type, title)).fetchone()
+        if existing:
+            self.conn.execute('DELETE FROM cafeteria_takeout_selections WHERE meal_date=? AND meal_type=? AND title=?', (today, meal_type, title))
+            self._sync_takeout_summary(meal_type)
+            return False
+        # A takeout selection replaces a previous main-counter choice, then
+        # remains independently toggleable alongside other takeout items.
+        self.conn.execute('DELETE FROM cafeteria_selections WHERE meal_date=? AND meal_type=?', (today, meal_type))
+        nutrients = nutrition or {}
+        self.conn.execute('INSERT INTO cafeteria_takeout_selections(meal_date,meal_type,title,calories,protein,carbs) VALUES(?,?,?,?,?,?)',
+                          (today, meal_type, title, nutrients.get('calories'), nutrients.get('protein'), nutrients.get('carbs')))
+        self._sync_takeout_summary(meal_type)
+        return True
+
     def select_manual_meal(self, meal_type, food_ids):
         rows = [dict(row) for row in self.conn.execute(
             'SELECT * FROM foods WHERE id IN (%s)' % ','.join('?' * len(food_ids)), food_ids
@@ -735,6 +794,7 @@ class Store:
         if not foods:
             raise ValueError('최소 한 가지 음식을 선택해 주세요.')
         title = self.compact_food_names(foods)
+        self.conn.execute('DELETE FROM cafeteria_takeout_selections WHERE meal_date=? AND meal_type=?', (date.today().isoformat(), meal_type))
         self.conn.execute('INSERT OR REPLACE INTO cafeteria_selections(meal_date,meal_type,title,calories,protein,carbs,source) VALUES(?,?,?,?,?,?,?)',
                           (date.today().isoformat(), meal_type, title, round(sum(food['calories'] for food in foods)),
                            round(sum(food['protein'] for food in foods), 1), round(sum(food['carbs'] for food in foods), 1), 'manual'))
@@ -746,6 +806,8 @@ class Store:
     def clear_cafeteria_meal(self, meal_type):
         """Return this meal to its ordinary saved set without touching others."""
         self.conn.execute('DELETE FROM cafeteria_selections WHERE meal_date=? AND meal_type=?',
+                          (date.today().isoformat(), meal_type))
+        self.conn.execute('DELETE FROM cafeteria_takeout_selections WHERE meal_date=? AND meal_type=?',
                           (date.today().isoformat(), meal_type))
         self.conn.commit()
 
@@ -1518,11 +1580,10 @@ class WelltableApp(App):
         is_freshmeal = restaurant.get('provider') == 'freshmeal'
         raw_menu = restaurant.get(self.selected_cafeteria_meal) or ''
         groups = self._menu_groups(raw_menu)
-        # Do not surface the source's miscellaneous offerings in the home
-        # card. Cached menus from older builds are refreshed once so their
-        # ungrouped rows cannot reappear after an upgrade.
+        # Welstory's three named counters remain the main list. Every other
+        # published item is deliberately retained for the expandable
+        # 테이크아웃 section below instead of being silently discarded.
         if restaurant.get('provider') == 'welstory':
-            groups = [item for item in groups if item.get('title') in WELSTORY_HOME_GROUPS]
             if not groups and restaurant['id'] not in self._welstory_sync_requested:
                 self._welstory_sync_requested.add(restaurant['id'])
                 Clock.schedule_once(lambda _dt, item=dict(restaurant): self.sync_cafeteria(item), .25)
@@ -1535,18 +1596,19 @@ class WelltableApp(App):
             # The Dongtan counter selector intentionally shows only K1–K4.
             groups = sorted(kitchens, key=lambda item: item['title'])
 
-        # Ready-to-eat convenience lists are intentionally kept out of the
-        # compact Home card.  They remain available at the restaurant source,
-        # but do not compete with the daily cafeteria counters here.
-        groups = [group for group in groups if '간편식' not in str(group.get('title') or '')]
-
-        has_menu = bool(groups)
-        if not groups:
+        # Existing named counters stay in the primary vertical list. All
+        # remaining provider items are available as takeout without changing
+        # that established list layout.
+        known_main = set(WELSTORY_HOME_GROUPS) | {'더고메', '소담상', '마이보글', 'K1', 'K2', 'K3', 'K4', '오늘의 메뉴'}
+        primary_groups = [group for group in groups if str(group.get('title') or '') in known_main]
+        takeout_groups = [group for group in groups if group not in primary_groups]
+        has_menu = bool(primary_groups or takeout_groups)
+        if not primary_groups and not takeout_groups:
             message = self._menu_errors.get(restaurant['id']) or (
                 '오늘 제공되는 식단이 없어요' if restaurant.get('synced_at') else '메뉴를 불러오는 중이에요')
-            groups = [{'title': '', 'menu': message}]
+            primary_groups = [{'title': '', 'menu': message}]
 
-        displayed_groups = groups
+        displayed_groups = primary_groups
         # Restaurant and meal are controls.  Counters are deliberately a
         # readable vertical menu list, so a user can compare every counter at
         # once instead of drilling into a third row of tiny buttons.
@@ -1557,7 +1619,11 @@ class WelltableApp(App):
         menu_lines = [compact_menu(g) for g in displayed_groups]
         capacity = max(12, (Window.width - dp(180)) / dp(12))
         row_heights = [dp(max(84, 19 * sum(max(1, math.ceil(len(line) / capacity)) for line in text.splitlines()) + 16)) for text in menu_lines]
-        card_height = dp(128) + sum(row_heights)
+        takeout_expanded = self.selected_cafeteria_group == 'takeout'
+        takeout_lines = [compact_menu(g) for g in takeout_groups] if takeout_expanded else []
+        takeout_heights = [dp(max(58, 18 * sum(max(1, math.ceil(len(line) / capacity)) for line in text.splitlines()) + 14)) for text in takeout_lines]
+        takeout_height = (dp(38) + sum(takeout_heights)) if takeout_groups else 0
+        card_height = dp(128) + sum(row_heights) + takeout_height
         # Use the same dark-glass surface as the other home cards.  A more
         # opaque blue cafeteria panel made this one section look detached
         # from the main page even though it is part of the same card system.
@@ -1597,7 +1663,7 @@ class WelltableApp(App):
         card.add_widget(meal_tabs)
 
         menu_list = RoundedCard(orientation='vertical', size_hint_y=None,
-                                height=sum(row_heights) + dp(4), radius=dp(15),
+                                height=sum(row_heights) + takeout_height + dp(4), radius=dp(15),
                                 padding=(dp(9), dp(2)), spacing=0,
                                 background_color=[.035,.052,.078,.76], border_color=[0,0,0,0], rim_strength=0)
         for group, row_height, menu_text in zip(displayed_groups, row_heights, menu_lines):
@@ -1654,6 +1720,40 @@ class WelltableApp(App):
                                              + Animation(surface_color=[.05,.58,.50,1], duration=.58)).start(target),
                     0,
                 )
+        if takeout_groups:
+            expanded = self.selected_cafeteria_group == 'takeout'
+            takeout_button = GlassButton(
+                text=('▾  테이크아웃  ·  선택 가능' if expanded else '▸  테이크아웃  ·  메뉴 보기'),
+                font_name=self.font_name, size_hint_y=None, height=dp(34), font_size=dp(11),
+                glass_color=(.06,.42,.38,.82) if expanded else (.08,.13,.21,.82),
+                color=(.80,1,.92,1),
+            )
+            takeout_button.bind(on_release=lambda _button: self.select_home_cafeteria_group('' if expanded else 'takeout'))
+            menu_list.add_widget(takeout_button)
+            selected_takeouts = {row['title'] for row in self.store.takeout_choices(self.selected_cafeteria_meal)}
+            for group, row_height, menu_text in zip(takeout_groups, takeout_heights, takeout_lines):
+                takeout_title = str(group.get('menu') or '')
+                selected_takeout = takeout_title in selected_takeouts
+                row = RoundedCard(orientation='horizontal', size_hint_y=None, height=row_height,
+                                  radius=dp(10), padding=(dp(10), 0), spacing=dp(4),
+                                  surface_color=[.05,.58,.50,1] if selected_takeout else [.065,.09,.145,1],
+                                  surface_opacity=.96 if selected_takeout else .50,
+                                  background_color=[1,1,1,.90] if selected_takeout else [0,0,0,0],
+                                  border_color=[0,0,0,0], rim_strength=0)
+                item_button = Button(text=menu_text, font_name=self.font_name, font_size=dp(11), halign='left', valign='middle',
+                                     background_normal='', background_color=(0,0,0,0),
+                                     color=(.84,1,.93,1) if selected_takeout else (.86,.91,.96,1), shorten=False)
+                item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
+                item_button.bind(on_release=lambda _b, meal_key=self.selected_cafeteria_meal, title=takeout_title, nutrients=group.get('nutrition', {}): self.choose_takeout_meal(meal_key, title, nutrients))
+                row.add_widget(item_button)
+                detail = GlassButton(text='···', font_name=self.font_name, size_hint_x=None, width=dp(38), font_size=dp(13),
+                                     glass_color=(.05,.58,.50,.88) if selected_takeout else (.11,.16,.25,.86),
+                                     color=(.88,1,.95,1) if selected_takeout else (.78,.87,1,1))
+                detail.bind(on_release=lambda _button, item=dict(group): self.popup_cafeteria_detail(item))
+                row.add_widget(detail)
+                menu_list.add_widget(row)
+                if selected_takeout and getattr(self, '_takeout_flash', None) == (self.selected_cafeteria_meal, takeout_title):
+                    Clock.schedule_once(lambda _dt, target=row: (Animation(surface_color=[.36,1,.89,1], duration=.12) + Animation(surface_color=[.05,.58,.50,1], duration=.58)).start(target), 0)
         card.add_widget(menu_list)
         restaurant_box.add_widget(card)
         self._update_cafeteria_widget(restaurant, displayed_groups)
@@ -1746,6 +1846,14 @@ class WelltableApp(App):
     def choose_cafeteria_meal(self, meal_type, title, nutrition=None):
         selected = self.store.toggle_cafeteria_choice(meal_type, title, nutrition)
         self._cafeteria_flash = (meal_type, title) if selected else None
+        self.refresh_home()
+    def choose_takeout_meal(self, meal_type, title, nutrition=None):
+        selected = self.store.toggle_takeout_choice(meal_type, title, nutrition)
+        if selected is None:
+            self._health_notice('완료된 식단이에요', '오늘의 식단 블록을 다시 눌러 완료를 해제한 뒤 변경할 수 있어요.')
+            return
+        self._takeout_flash = (meal_type, title) if selected else None
+        self.selected_cafeteria_group = 'takeout'
         self.refresh_home()
     def clear_cafeteria_meal(self, meal_type):
         self.store.clear_cafeteria_meal(meal_type)
@@ -2007,15 +2115,16 @@ class WelltableApp(App):
                 # Repair restaurants saved by earlier builds: resolve their
                 # name to a real public restaurant id before requesting menus.
                 if not path:
-                    search_url = 'https://welplan.pmh.codes/proxy/search?q=' + urllib.parse.quote(restaurant['name'])
-                    found = self._fetch_public_json(search_url, 'https://welplan.pmh.codes/')
+                    search_url = SERVICE_BASE_URL + '/api/welstory-search?' + urllib.parse.urlencode({'q': restaurant['name']})
+                    found = self._fetch_public_json(search_url, SERVICE_BASE_URL + '/')
                     if not found: raise RuntimeError('식당을 찾지 못했습니다')
                     item = found[0]; slug = urllib.parse.quote(item['name'].strip().lower().replace(' ', '-'), safe='-')
                     default_vendor = 'welstory'
                     path = f"/restaurants/{item.get('vendor', default_vendor)}/{item['id']}/{slug}"
-                url = 'https://welplan.pmh.codes' + path.rstrip('/') + '/' + date.today().strftime('%Y%m%d')
-                document = self._fetch_public_text(url, 'text/html', 'https://welplan.pmh.codes/')
-                meals = enrich_welstory(self._fetch_public_text, welstory_html(document, date.today().strftime('%Y%m%d')))
+                day = date.today().strftime('%Y%m%d')
+                url = SERVICE_BASE_URL + '/api/welstory-menu?' + urllib.parse.urlencode({'path': path, 'date': day})
+                document = self._fetch_public_text(url, 'text/html', SERVICE_BASE_URL + '/')
+                meals = enrich_welstory(self._fetch_welstory_detail, welstory_html(document, day))
                 # Empty published menus are a normal response.  Persist them
                 # so the card shows an inline empty state rather than a popup.
                 Clock.schedule_once(lambda _dt, cafe_id=restaurant['id'], fetched=meals, saved_path=path:
@@ -2025,6 +2134,21 @@ class WelltableApp(App):
                 detail = str(exc).strip() or '네트워크 상태를 확인해 주세요.'
                 Clock.schedule_once(lambda _dt: self._health_notice(f'{provider_name} 메뉴를 불러오지 못했어요', detail[:110]), 0)
         Thread(target=worker, daemon=True).start()
+
+    def _fetch_welstory_detail(self, original_url, *_args, **_kwargs):
+        """Use the trusted app service for Welplan's public detail request."""
+        parsed = urllib.parse.urlsplit(original_url)
+        marker = '/proxy/'
+        if marker not in parsed.path or not parsed.path.endswith('/menus/detail'):
+            raise ValueError('지원하지 않는 웰스토리 상세 경로입니다.')
+        restaurant = urllib.parse.unquote(parsed.path.split(marker, 1)[1].rsplit('/menus/detail', 1)[0])
+        parameters = urllib.parse.parse_qs(parsed.query)
+        payload = {'restaurant': restaurant}
+        for key in ('date', 'mealTimeId', 'hallNo', 'courseType', 'nutrient'):
+            if parameters.get(key):
+                payload[key] = parameters[key][0]
+        url = SERVICE_BASE_URL + '/api/welstory-detail?' + urllib.parse.urlencode(payload)
+        return self._fetch_public_text(url, 'application/json', SERVICE_BASE_URL + '/')
 
     @staticmethod
     def pulmuone_sites(keyword):
@@ -2716,8 +2840,13 @@ class WelltableApp(App):
                     if not isinstance(items, list) or not items:
                         raise ValueError((payload.get('error') if isinstance(payload, dict) else '') or '일치하는 식품을 찾지 못했어요.')
                     normalized = re.sub(r'\s+', '', query).casefold()
-                    food = next((item for item in items if re.sub(r'\s+', '', str(item.get('name') or '')).casefold() == normalized), items[0])
-                    Clock.schedule_once(lambda _dt, found=dict(food): fill_fields(found), 0)
+                    exact = next((item for item in items if re.sub(r'\s+', '', str(item.get('name') or '')).casefold() == normalized), None)
+                    if exact:
+                        Clock.schedule_once(lambda _dt, found=dict(exact): fill_fields(found), 0)
+                    elif len(items) == 1:
+                        Clock.schedule_once(lambda _dt, found=dict(items[0]): fill_fields(found), 0)
+                    else:
+                        Clock.schedule_once(lambda _dt, choices=[dict(item) for item in items]: self.popup_nutrition_choices(choices, fill_fields, lookup), 0)
                 except Exception as exc:
                     Clock.schedule_once(lambda _dt, message=str(exc): show_lookup_error(message), 0)
 
@@ -2742,6 +2871,11 @@ class WelltableApp(App):
             Thread(target=worker, daemon=True).start()
 
         lookup.bind(on_release=fill_from_search)
+        # Narrow, centered entry blocks remain usable in portrait mode and
+        # avoid an accidental horizontal overflow on small Samsung screens.
+        for item in fields['inputs']:
+            item.size_hint_x = .5
+            item.pos_hint = {'center_x': .5}
         def save(_button):
             try:
                 self.store.add_food(fields['inputs'][0].text, fields['inputs'][1].text,
@@ -2753,6 +2887,35 @@ class WelltableApp(App):
             except (ValueError, sqlite3.IntegrityError) as exc:
                 fields['error'].text = '이미 있는 이름이거나 영양정보가 올바르지 않아요.' if isinstance(exc, sqlite3.IntegrityError) else str(exc)
         fields['save'].bind(on_release=save)
+        popup.open()
+
+    def popup_nutrition_choices(self, items, on_choose, lookup_button=None):
+        """Let a person select among multiple 식약처 matches vertically."""
+        box = RoundedCard(orientation='vertical', padding=dp(18), spacing=dp(9), radius=dp(24),
+                          background_color=[.045,.06,.092,.99], border_color=[.72,.84,1,.22])
+        header, dialog = self._dialog_header('검색 결과', '일치하는 식품을 선택하면 영양정보를 입력합니다.')
+        box.add_widget(header)
+        list_box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(7))
+        list_box.bind(minimum_height=list_box.setter('height'))
+        popup = Popup(title='', content=box, size_hint=(.90,.76), background='', background_color=(0,0,0,0), overlay_color=(0,0,0,.66))
+        dialog['popup'] = popup
+        for item in items[:20]:
+            name = str(item.get('name') or '이름 미제공')
+            maker = str(item.get('manufacturer') or item.get('category') or '')
+            calories = item.get('calories')
+            detail = f"{maker}  ·  {'열량 미제공' if calories in (None, '') else f'{float(calories):g} kcal'}"
+            choice = GlassButton(text=f'{name}\n{detail}', font_name=self.font_name, font_size=dp(11),
+                                 halign='left', valign='middle', text_size=(dp(280), dp(46)),
+                                 glass_color=(.075,.11,.18,.94), color=(.93,.97,1,1), size_hint_y=None, height=dp(62), padding=[dp(12),dp(6)])
+            choice.bind(size=lambda widget, size: setattr(widget, 'text_size', (max(dp(40), size[0]-dp(24)), size[1]-dp(10))))
+            def choose(_button, found=dict(item)):
+                popup.dismiss()
+                on_choose(found)
+            choice.bind(on_release=choose)
+            list_box.add_widget(choice)
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(3)); scroll.add_widget(list_box)
+        box.add_widget(scroll)
+        popup.bind(on_dismiss=lambda *_args: setattr(lookup_button, 'disabled', False) if lookup_button is not None else None)
         popup.open()
 
     def popup_body(self):

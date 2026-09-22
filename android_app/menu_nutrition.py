@@ -80,7 +80,16 @@ def welstory_html(document, target_date):
         # empty menu.
         if not selected and rows and not any(item['course_type'] for item in rows):
             selected = rows
-        output[meal] = json.dumps(selected, ensure_ascii=False)
+        # Keep every published non-primary item as well. The home UI renders
+        # the known counters first and collects these remaining items under
+        # its expandable 테이크아웃 group; discarding them here made that
+        # group impossible to build and hid valid meal options.
+        selected_ids = {item.get('source_id') for item in selected}
+        takeout = [item for item in rows if item.get('source_id') not in selected_ids]
+        for item in takeout:
+            item = item
+            item['title'] = '테이크아웃'
+        output[meal] = json.dumps(selected + takeout, ensure_ascii=False)
     return output
 
 

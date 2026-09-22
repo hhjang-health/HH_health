@@ -11,6 +11,7 @@ import androidx.health.connect.client.HealthConnectClient;
 import androidx.health.connect.client.PermissionController;
 import androidx.health.connect.client.records.ExerciseSessionRecord;
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord;
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord;
 import androidx.health.connect.client.records.BodyFatRecord;
 import androidx.health.connect.client.records.BasalMetabolicRateRecord;
 import androidx.health.connect.client.records.HeightRecord;
@@ -314,11 +315,13 @@ public final class HealthConnectBridge {
             for (HeightRecord item : heights) if (item.getTime().isAfter(latest.getTime())) latest = item;
             payload.put("height_cm", latest.getHeight().getMeters() * 100d);
         }
+        double basalKcalPerDay = 0d;
         List<BasalMetabolicRateRecord> basalRates = read(client, BasalMetabolicRateRecord.class, range);
         if (!basalRates.isEmpty()) {
             BasalMetabolicRateRecord latest = basalRates.get(0);
             for (BasalMetabolicRateRecord item : basalRates) if (item.getTime().isAfter(latest.getTime())) latest = item;
-            payload.put("basal_kcal", latest.getBasalMetabolicRate().getKilocaloriesPerDay());
+            basalKcalPerDay = latest.getBasalMetabolicRate().getKilocaloriesPerDay();
+            payload.put("basal_kcal", basalKcalPerDay);
         }
 
         List<HeartRateRecord> heartRates = read(client, HeartRateRecord.class, range);
@@ -375,9 +378,26 @@ public final class HealthConnectBridge {
                 TimeRangeFilter.between(todayStart, tomorrowStart))) {
             activeCalories += item.getEnergy().getKilocalories();
         }
-        // Do not fall back to TotalCaloriesBurnedRecord: that value includes
-        // basal metabolism. The 운동 screen intentionally reports activity
-        // calories only, matching Samsung Health's activity-calorie counter.
+        // Samsung Health installations often expose today's activity ring
+        // only through TotalCaloriesBurnedRecord. Derive active energy by
+        // subtracting elapsed resting energy; never display the raw total.
+        // This matches Samsung Health's '활동 칼로리' card while retaining the
+        // dedicated ActiveCalories record whenever the provider offers it.
+        if (activeCalories <= 0d) {
+            double totalCalories = 0d;
+            for (TotalCaloriesBurnedRecord item : read(client, TotalCaloriesBurnedRecord.class,
+                    TimeRangeFilter.between(todayStart, tomorrowStart))) {
+                totalCalories += item.getEnergy().getKilocalories();
+            }
+            if (totalCalories > 0d) {
+                double elapsedDayFraction = Math.max(0d, Math.min(1d,
+                        (now.toEpochMilli() - todayStart.toEpochMilli()) / 86400000d));
+                // If the provider omits BMR, use a conservative standard
+                // resting estimate solely to avoid showing total calories.
+                double resting = (basalKcalPerDay > 0d ? basalKcalPerDay : 1500d) * elapsedDayFraction;
+                activeCalories = Math.max(0d, totalCalories - resting);
+            }
+        }
         payload.put("active_calories", Math.round(activeCalories));
 
         double distanceMeters = 0d;

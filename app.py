@@ -8,8 +8,8 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
 API_URL = "https://apis.data.go.kr/1471000/FoodNtrCpntDbInfo03/getFoodNtrCpntDbInq03"
+WELPLAN_BASE = "https://welplan.pmh.codes"
 cache, visits = {}, defaultdict(deque)
-
 
 def number(value):
     try:
@@ -17,14 +17,12 @@ def number(value):
     except (TypeError, ValueError):
         return None
 
-
 def first(item, *keys):
     for key in keys:
         value = item.get(key)
         if value not in (None, "", "-"):
             return value
     return None
-
 
 def normalize(item):
     return {
@@ -39,11 +37,47 @@ def normalize(item):
         "source": "식품의약품안전처 식품영양성분DB",
     }
 
-
 @app.get("/")
 def health():
     return jsonify({"service": "hh-health", "status": "ok"})
 
+def _welplan_fetch(url, accept="application/json, text/plain, */*"):
+    req = Request(url, headers={"Accept": accept, "User-Agent": "HH-health-menu/2.0"})
+    with urlopen(req, timeout=15) as response:
+        return response.read()
+
+@app.get("/api/welstory-menu")
+def welstory_menu_proxy():
+    path = str(request.args.get("path") or "")
+    day = str(request.args.get("date") or "")
+    if not path.startswith("/restaurants/") or any(token in path for token in ("?", "#", "..")) or len(day) != 8 or not day.isdigit():
+        return jsonify(error="잘못된 웰스토리 메뉴 요청입니다."), 400
+    try:
+        return app.response_class(_welplan_fetch(WELPLAN_BASE + path.rstrip("/") + "/" + day, "text/html, */*"), content_type="text/html; charset=utf-8")
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return jsonify(error="웰스토리 메뉴 서버에 연결하지 못했습니다."), 502
+
+@app.get("/api/welstory-search")
+def welstory_search_proxy():
+    query = " ".join((request.args.get("q") or "").split())
+    if not query or len(query) > 80:
+        return jsonify(error="검색어는 1~80자로 입력해 주세요."), 400
+    try:
+        return app.response_class(_welplan_fetch(WELPLAN_BASE + "/proxy/search?" + urlencode({"q": query}), "application/json"), content_type="application/json; charset=utf-8")
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return jsonify(error="웰스토리 식당 검색 서버에 연결하지 못했습니다."), 502
+
+@app.get("/api/welstory-detail")
+def welstory_detail_proxy():
+    restaurant = str(request.args.get("restaurant") or "")
+    allowed = {key: str(request.args[key]) for key in ("date", "mealTimeId", "hallNo", "courseType", "nutrient") if key in request.args}
+    if not restaurant or len(restaurant) > 100 or not restaurant.replace("-", "").replace("_", "").isalnum() or not all(value and len(value) <= 40 for value in allowed.values()):
+        return jsonify(error="잘못된 메뉴 상세 요청입니다."), 400
+    try:
+        url = WELPLAN_BASE + "/proxy/" + restaurant + "/menus/detail?" + urlencode(allowed)
+        return app.response_class(_welplan_fetch(url, "application/json"), content_type="application/json; charset=utf-8")
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return jsonify(error="웰스토리 상세 서버에 연결하지 못했습니다."), 502
 
 @app.get("/api/nutrition-search")
 def nutrition_search():
@@ -81,12 +115,9 @@ def nutrition_search():
     cache[query.casefold()] = (now, result)
     return jsonify(items=result, cached=False)
 
-
 @app.get("/api/app-update")
 def app_update():
     return jsonify(version=os.environ.get("APP_RELEASE_VERSION", "0.0.0"), notes=os.environ.get("APP_RELEASE_NOTES", ""), apk_url=os.environ.get("APP_RELEASE_APK_URL", ""))
 
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")))
-

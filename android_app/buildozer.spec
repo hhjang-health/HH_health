@@ -5,14 +5,14 @@ package.domain = com.welltable
 source.dir = .
 source.include_exts = py,kv,ttf,otf,png,json,db
 icon.filename = %(source.dir)s/assets/icon.png
-version = 2.0.6
+version = 2.0.7
 presplash.filename = %(source.dir)s/assets/startup.png
 android.presplash_color = #091629
 requirements = python3,kivy
 orientation = portrait
 # Keep Android's status bar visible for a normal phone-app experience.
 fullscreen = 0
-android.permissions = android.permission.INTERNET, android.permission.health.READ_EXERCISE, android.permission.health.WRITE_EXERCISE, android.permission.health.READ_WEIGHT, android.permission.health.READ_HEART_RATE, android.permission.health.READ_SLEEP, android.permission.health.READ_STEPS, android.permission.health.READ_ACTIVE_CALORIES_BURNED, android.permission.health.READ_DISTANCE, android.permission.health.READ_SPEED, android.permission.health.READ_RESTING_HEART_RATE, android.permission.health.READ_HEART_RATE_VARIABILITY, android.permission.health.READ_OXYGEN_SATURATION, android.permission.health.READ_RESPIRATORY_RATE, android.permission.health.READ_BODY_FAT, android.permission.health.READ_HEIGHT, android.permission.health.READ_BASAL_METABOLIC_RATE, android.permission.health.READ_LEAN_BODY_MASS, android.permission.health.READ_BONE_MASS, android.permission.health.READ_HYDRATION, android.permission.health.READ_NUTRITION, android.permission.health.WRITE_NUTRITION, android.permission.health.READ_HEALTH_DATA_HISTORY
+android.permissions = android.permission.INTERNET, android.permission.health.READ_EXERCISE, android.permission.health.WRITE_EXERCISE, android.permission.health.READ_WEIGHT, android.permission.health.READ_HEART_RATE, android.permission.health.READ_SLEEP, android.permission.health.READ_STEPS, android.permission.health.READ_ACTIVE_CALORIES_BURNED, android.permission.health.READ_TOTAL_CALORIES_BURNED, android.permission.health.READ_DISTANCE, android.permission.health.READ_SPEED, android.permission.health.READ_RESTING_HEART_RATE, android.permission.health.READ_HEART_RATE_VARIABILITY, android.permission.health.READ_OXYGEN_SATURATION, android.permission.health.READ_RESPIRATORY_RATE, android.permission.health.READ_BODY_FAT, android.permission.health.READ_HEIGHT, android.permission.health.READ_BASAL_METABOLIC_RATE, android.permission.health.READ_LEAN_BODY_MASS, android.permission.health.READ_BONE_MASS, android.permission.health.READ_HYDRATION, android.permission.health.READ_NUTRITION, android.permission.health.WRITE_NUTRITION, android.permission.health.READ_HEALTH_DATA_HISTORY
 android.api = 35
 # Health Connect itself supports Android 8 (API 26) and above.
 android.minapi = 26
