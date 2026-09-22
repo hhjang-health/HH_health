@@ -107,10 +107,15 @@ def parse_menu(payload, menu_date, detail_lookup=None):
             # made a whole Take Out counter behave as one inseparable choice.
             item_names = []
             for part in raw_parts:
-                for value in re.split(r'\s*(?:,|·|/|\\n)\s*', part):
-                    value = re.sub(r'\s+', ' ', value).strip()
-                    if value and value not in item_names:
-                        item_names.append(value)
+                for segment in re.split(r'\s*(?:,|·|/|\\n)\s*', part):
+                    # Take Out 1/2 are bundles.  The source sometimes uses
+                    # whitespace alone between products, so keep each product
+                    # selectable rather than merging the full line.
+                    values = re.split(r'\s+', segment) if takeout else [segment]
+                    for value in values:
+                        value = re.sub(r'\s+', ' ', value).strip()
+                        if value and value not in item_names:
+                            item_names.append(value)
             # Counter-level nutrients describe the complete published tray,
             # not each child.  Reusing them per child would multiply calories
             # when a user selects two items, so only a one-item counter keeps

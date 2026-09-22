@@ -57,6 +57,14 @@ class SourceNutritionTests(unittest.TestCase):
         # child and therefore cannot be multiplied by multi-selection.
         self.assertEqual(row['items'][0]['nutrition'], {})
 
+    def test_wonder_takeout_splits_whitespace_joined_products(self):
+        data={'data':[
+            ['020','TAKE OUT1','20260919','샌드위치 베이글',420,'음료 과일'],
+        ]}
+        row=json.loads(parse_menu(data,'20260919')['lunch'])[0]
+        self.assertEqual(row['title'], 'Take Out1')
+        self.assertEqual([item['menu'] for item in row['items']], ['샌드위치', '베이글', '음료', '과일'])
+
     def test_welstory_individual_values_not_sum(self):
         doc='d[0]={id:"a",date:"20260919",name:"밥",mealTimeId:"1",nutrition:{calories:600,protein:22},components:[]};d[1]={id:"b",date:"20260919",name:"면",mealTimeId:"1",nutrition:{calories:700,protein:25},components:[]};'
         rows=json.loads(welstory_html(doc,'20260919')['breakfast'])

@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.3'
+APP_VERSION = '2.1.4'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -515,6 +515,15 @@ class Store:
                 WHERE cafeteria_id IN (SELECT id FROM cafeterias
                                        WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
             self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_item_refresh_213')")
+            self.conn.commit()
+        # MAIN/Take Out groups are now rendered as parent cards with separate
+        # selectable child foods.  Discard only their provider cache once so
+        # an older flattened response cannot keep showing after the upgrade.
+        if not self.conn.execute("SELECT 1 FROM app_migrations WHERE name='takeout_group_refresh_214'").fetchone():
+            self.conn.execute("""DELETE FROM cafeteria_menus
+                WHERE cafeteria_id IN (SELECT id FROM cafeterias
+                                       WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
+            self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_group_refresh_214')")
             self.conn.commit()
         self.conn.executemany("INSERT OR IGNORE INTO foods(name,category,calories,protein,carbs,fat,serving) VALUES(?,?,?,?,?,?,?)", FOODS)
         # Meal sets are personal presets. Foods are seeded as a library, while
@@ -2086,22 +2095,21 @@ class WelltableApp(App):
             choices = group.get('items')
             if not isinstance(choices, list) or not choices:
                 choices = [{'menu': str(group.get('menu') or ''), 'nutrition': dict(group.get('nutrition') or {})}]
+            child_rows = []
             for choice in choices:
                 menu_raw = str(choice.get('menu') or '').strip()
                 if not menu_raw:
                     continue
-                menu_text = re.sub(r'\s*(?: · |,)\s*', '\n', menu_raw)
                 takeout_title = menu_raw if group_title in ('', '오늘의 메뉴') else f'{group_title} · {menu_raw}'
                 selected = takeout_title in selected_takeouts
-                line_count = max(1, len(menu_text.splitlines()))
                 row = RoundedCard(orientation='horizontal', size_hint_y=None,
-                                  height=dp(max(58, 19 * (line_count + (0 if group_title in ('', '오늘의 메뉴') else 1)) + 18)), radius=dp(12),
+                                  height=dp(48), radius=dp(12),
                                   padding=(dp(10), dp(4)), spacing=dp(6),
                                   surface_color=[.05,.58,.50,1] if selected else [.065,.09,.145,1],
                                   surface_opacity=.96 if selected else .58,
                                   background_color=[1,1,1,.90] if selected else [0,0,0,0],
                                   border_color=[0,0,0,0], rim_strength=0)
-                item_button = Button(text=(menu_text if group_title in ('', '오늘의 메뉴') else f'{group_title}\n{menu_text}'), font_name=self.font_name, font_size=dp(11),
+                item_button = Button(text=menu_raw, font_name=self.font_name, font_size=dp(12),
                                      halign='left', valign='middle', background_normal='', background_color=(0,0,0,0),
                                      color=(.84,1,.93,1) if selected else (.86,.91,.96,1), shorten=False)
                 item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
@@ -2124,7 +2132,25 @@ class WelltableApp(App):
                                      color=(.88,1,.95,1) if selected else (.78,.87,1,1))
                 detail.bind(on_release=lambda _button, item=detail_item: self.popup_cafeteria_detail(item))
                 row.add_widget(detail)
-                list_box.add_widget(row)
+                child_rows.append(row)
+            if not child_rows:
+                continue
+            # The provider counter is a visual parent (MAIN1/MAIN2 or Take
+            # Out1/Take Out2); each food inside it remains an independent
+            # selection.  This avoids repeating the category on every row.
+            group_card = RoundedCard(orientation='vertical', size_hint_y=None,
+                                     height=dp(35 + 53 * len(child_rows)), radius=dp(15),
+                                     padding=(dp(9), dp(8)), spacing=dp(5),
+                                     surface_color=[.075,.10,.16,1], surface_opacity=.74,
+                                     background_color=[0,0,0,0], border_color=[0,0,0,0], rim_strength=0)
+            heading = Label(text=group_title or '오늘의 메뉴', font_name=self.font_name,
+                            font_size=dp(13), bold=True, color=(.74,.86,1,1),
+                            size_hint_y=None, height=dp(20), halign='left', valign='middle')
+            heading.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
+            group_card.add_widget(heading)
+            for row in child_rows:
+                group_card.add_widget(row)
+            list_box.add_widget(group_card)
         scroll.add_widget(list_box)
         box.add_widget(scroll)
         popup = Popup(content=box, title='', size_hint=(.94, .80), background='', background_color=(0,0,0,0))
@@ -2244,11 +2270,24 @@ class WelltableApp(App):
                 day = date.today().strftime('%Y%m%d')
                 url = SERVICE_BASE_URL + '/api/welstory-menu?' + urllib.parse.urlencode({'path': path, 'date': day})
                 document = self._fetch_public_text(url, 'text/html', SERVICE_BASE_URL + '/')
-                meals = enrich_welstory(self._fetch_welstory_detail, welstory_html(document, day))
-                # Empty published menus are a normal response.  Persist them
-                # so the card shows an inline empty state rather than a popup.
-                Clock.schedule_once(lambda _dt, cafe_id=restaurant['id'], fetched=meals, saved_path=path:
+                base_meals = welstory_html(document, day)
+                # The public menu list is enough to render the cafeteria card.
+                # Save it first; the slower per-counter nutrition documents are
+                # fetched in a second background task and replace this cache
+                # only when they arrive successfully.
+                Clock.schedule_once(lambda _dt, cafe_id=restaurant['id'], fetched=base_meals, saved_path=path:
                                     self._commit_cafeteria_sync(cafe_id, fetched, saved_path, provider_name), 0)
+                def enrich_worker():
+                    try:
+                        detailed_meals = enrich_welstory(self._fetch_welstory_detail, base_meals)
+                        Clock.schedule_once(lambda _dt, cafe_id=restaurant['id'], fetched=detailed_meals, saved_path=path:
+                                            self._commit_cafeteria_sync(cafe_id, fetched, saved_path, provider_name), 0)
+                    except Exception:
+                        # The basic menu is already usable and cached.  A
+                        # detail failure must never turn a successful menu
+                        # refresh into an error dialog.
+                        Logger.exception('%s background nutrient sync failed', provider_name)
+                Thread(target=enrich_worker, daemon=True).start()
             except Exception as exc:
                 Logger.exception('%s public menu sync failed', provider_name)
                 detail = str(exc).strip() or '네트워크 상태를 확인해 주세요.'
@@ -2397,11 +2436,19 @@ class WelltableApp(App):
                         child_name = str(child.get('name') or '').strip()
                         if not child_name or child.get('mainDish'):
                             continue
+                        # SnackPick publishes the individual products in one
+                        # whitespace-separated field.  MAIN1/MAIN2 are product
+                        # bundles, so spaces are separators here (not part of
+                        # one combined menu title).
+                        child_names = [part.strip() for part in re.split(r'\s+', child_name) if part.strip()] \
+                                      if re.fullmatch(r'MAIN\s*[12]', corner, re.I) else [child_name]
                         child_nutrition = {}
                         kcal = child.get('kcal')
-                        if isinstance(kcal, (int, float)) and kcal > 0:
+                        if len(child_names) == 1 and isinstance(kcal, (int, float)) and kcal > 0:
                             child_nutrition['calories'] = float(kcal)
-                        children.append({'menu': child_name, 'nutrition': child_nutrition})
+                        for part in child_names:
+                            if part not in [existing['menu'] for existing in children]:
+                                children.append({'menu': part, 'nutrition': dict(child_nutrition)})
                     # The feed normally has details, but do not make an empty
                     # popup if its detail endpoint is temporarily unavailable.
                     if not children:
