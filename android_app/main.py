@@ -51,7 +51,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.0.8'
+APP_VERSION = '2.0.9'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -431,6 +431,7 @@ class Store:
         self._ensure_column('profile', 'steps', 'INTEGER DEFAULT 0')
         self._ensure_column('profile', 'active_minutes', 'INTEGER DEFAULT 0')
         self._ensure_column('profile', 'active_calories', 'INTEGER DEFAULT 0')
+        self._ensure_column('profile', 'total_calories', 'INTEGER DEFAULT 0')
         self._ensure_column('profile', 'distance_meters', 'INTEGER DEFAULT 0')
         self._ensure_column('profile', 'target_steps', 'INTEGER DEFAULT 6300')
         self._ensure_column('profile', 'target_exercise_calories', 'INTEGER DEFAULT 300')
@@ -858,17 +859,18 @@ class Store:
         steps = int(snapshot.get('steps', profile.get('steps') or 0) or 0)
         active_minutes = int(snapshot.get('active_minutes', profile.get('active_minutes') or 0) or 0)
         active_calories = int(snapshot.get('active_calories', profile.get('active_calories') or 0) or 0)
+        total_calories = int(snapshot.get('total_calories', profile.get('total_calories') or 0) or 0)
         distance_meters = int(snapshot.get('distance_meters', profile.get('distance_meters') or 0) or 0)
-        self.conn.execute("""INSERT INTO profile(id,name,birthday,heart_rate,sleep_hours,steps,active_minutes,active_calories,distance_meters,height_cm,basal_kcal,health_connected)
-            VALUES(1,?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET
+        self.conn.execute("""INSERT INTO profile(id,name,birthday,heart_rate,sleep_hours,steps,active_minutes,active_calories,total_calories,distance_meters,height_cm,basal_kcal,health_connected)
+            VALUES(1,?,?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET
             heart_rate=excluded.heart_rate, sleep_hours=excluded.sleep_hours,
             steps=excluded.steps, active_minutes=excluded.active_minutes,
-            active_calories=excluded.active_calories, distance_meters=excluded.distance_meters,
+            active_calories=excluded.active_calories, total_calories=excluded.total_calories, distance_meters=excluded.distance_meters,
             height_cm=COALESCE(excluded.height_cm, profile.height_cm),
             basal_kcal=COALESCE(excluded.basal_kcal, profile.basal_kcal),
             health_connected=1""",
             (profile.get('name') or '', profile.get('birthday') or '', heart_rate, sleep_hours,
-             steps, active_minutes, active_calories, distance_meters,
+             steps, active_minutes, active_calories, total_calories, distance_meters,
              snapshot.get('height_cm'), snapshot.get('basal_kcal')))
 
         # These rows originate from Health Connect and may be safely refreshed.
@@ -1421,27 +1423,59 @@ class WelltableApp(App):
         box.add_widget(header)
         notes = Label(text=self.update_notes or '새로운 기능과 안정성 개선이 포함되어 있어요.',
                       font_name=self.font_name, color=(.80,.86,.96,1), font_size=dp(12),
-                      halign='left', valign='top', text_size=(dp(265), None), size_hint_y=None)
-        notes.texture_update(); notes.height = max(dp(54), notes.texture_size[1] + dp(6))
-        box.add_widget(notes)
+                      halign='left', valign='top', text_size=(dp(290), None), size_hint_y=None)
+        notes.texture_update()
+        notes.height = max(dp(54), notes.texture_size[1] + dp(10))
+        # Keep short release notes compact, while a longer user-facing note
+        # remains completely readable inside its own vertical scroll area.
+        notes_scroll = ScrollView(do_scroll_x=False, bar_width=dp(3), size_hint_y=None,
+                                  height=min(notes.height, Window.height * .46))
+        notes_scroll.add_widget(notes)
+        box.add_widget(notes_scroll)
         buttons = BoxLayout(size_hint_y=None, height=dp(43), spacing=dp(9))
         later = GlassButton(text='다음에', font_name=self.font_name, glass_color=(.11,.15,.23,.84), color=(.75,.83,.96,1))
         install = GlassButton(text='업데이트', font_name=self.font_name, glass_color=(.86,.33,.10,.78), color=(1,.94,.88,1))
         buttons.add_widget(later); buttons.add_widget(install); box.add_widget(buttons)
-        popup = Popup(title='', content=box, size_hint=(.86,None), height=dp(220), background='', background_color=(0,0,0,0))
+        popup_height = min(Window.height * .82, dp(64 + 43 + 64) + notes_scroll.height)
+        popup = Popup(title='', content=box, size_hint=(.90,None), height=max(dp(205), popup_height), background='', background_color=(0,0,0,0))
         dialog['popup'] = popup
         later.bind(on_release=lambda _button: popup.dismiss())
         def begin(_button):
             popup.dismiss()
-            try:
-                # Android must show its own package-installer confirmation;
-                # the browser download is intentional and never silently
-                # installs an APK.
-                webbrowser.open(self._update_apk_url)
-            except Exception:
-                self._health_notice('업데이트를 열 수 없어요', '네트워크를 확인한 뒤 다시 시도해 주세요.')
+            if not self._enqueue_apk_download():
+                self._health_notice('업데이트를 시작하지 못했어요', '저장공간과 네트워크 연결을 확인한 뒤 다시 시도해 주세요.')
         install.bind(on_release=begin)
         popup.open()
+
+    def _enqueue_apk_download(self):
+        """Download an approved release straight into Android Downloads.
+
+        This intentionally uses Android's DownloadManager rather than a
+        browser intent, so tapping 업데이트 never opens GitHub first. Android
+        still owns the later package-installer confirmation, as it must.
+        """
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            Context = autoclass('android.content.Context')
+            Uri = autoclass('android.net.Uri')
+            DownloadManager = autoclass('android.app.DownloadManager')
+            Request = autoclass('android.app.DownloadManager$Request')
+            Environment = autoclass('android.os.Environment')
+            activity = PythonActivity.mActivity
+            request = Request(Uri.parse(self._update_apk_url))
+            request.setTitle(f'살빼자 v{self.update_version}')
+            request.setDescription('최신 APK를 다운로드하고 있어요.')
+            request.setMimeType('application/vnd.android.package-archive')
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                                                       f'살빼자_{self.update_version}.apk')
+            activity.getSystemService(Context.DOWNLOAD_SERVICE).enqueue(request)
+            self._health_notice('다운로드를 시작했어요', '완료 알림을 누르면 최신 버전을 설치할 수 있어요.')
+            return True
+        except Exception:
+            Logger.exception('APK DownloadManager request failed')
+            return False
 
     def configure_system_bars(self):
         """Native activity owns the system bars after its SDL surface exists."""
@@ -1589,12 +1623,17 @@ class WelltableApp(App):
                 Clock.schedule_once(lambda _dt, item=dict(restaurant): self.sync_cafeteria(item), .25)
         if restaurant.get('provider') == WONDERPLUS_PROVIDER:
             kitchens = []
+            non_kitchens = []
             for group in groups:
                 match = re.search(r'(?:키친|kitchen|k)\s*([1-4])', group['title'], re.IGNORECASE)
                 if match:
                     kitchens.append({**group, 'title': f"K{match.group(1)}"})
+                else:
+                    # Keep every published non-counter entry. It belongs in
+                    # the common takeout picker instead of being discarded.
+                    non_kitchens.append(group)
             # The Dongtan counter selector intentionally shows only K1–K4.
-            groups = sorted(kitchens, key=lambda item: item['title'])
+            groups = sorted(kitchens, key=lambda item: item['title']) + non_kitchens
 
         # Existing named counters stay in the primary vertical list. All
         # remaining provider items are available as takeout without changing
@@ -1623,10 +1662,10 @@ class WelltableApp(App):
         menu_lines = [compact_menu(g) for g in displayed_groups]
         capacity = max(12, (Window.width - dp(180)) / dp(12))
         row_heights = [dp(max(84, 19 * sum(max(1, math.ceil(len(line) / capacity)) for line in text.splitlines()) + 16)) for text in menu_lines]
-        takeout_expanded = self.selected_cafeteria_group == 'takeout'
-        takeout_lines = [compact_menu(g) for g in takeout_groups] if takeout_expanded else []
-        takeout_heights = [dp(max(58, 18 * sum(max(1, math.ceil(len(line) / capacity)) for line in text.splitlines()) + 14)) for text in takeout_lines]
-        takeout_height = (dp(38) + sum(takeout_heights)) if takeout_groups else 0
+        # Takeout is intentionally a separate scrollable dialog. Keeping it
+        # out of this home card prevents a long menu from pushing the actual
+        # meal controls off screen on small phones.
+        takeout_height = dp(38) if takeout_groups else 0
         card_height = dp(128) + sum(row_heights) + takeout_height
         # Use the same dark-glass surface as the other home cards.  A more
         # opaque blue cafeteria panel made this one section look detached
@@ -1725,39 +1764,13 @@ class WelltableApp(App):
                     0,
                 )
         if takeout_groups:
-            expanded = self.selected_cafeteria_group == 'takeout'
             takeout_button = GlassButton(
-                text=('▾  테이크아웃  ·  선택 가능' if expanded else '▸  테이크아웃  ·  메뉴 보기'),
-                font_name=self.font_name, size_hint_y=None, height=dp(34), font_size=dp(11),
-                glass_color=(.06,.42,.38,.82) if expanded else (.08,.13,.21,.82),
-                color=(.80,1,.92,1),
+                text='테이크아웃  ·  메뉴 보기', font_name=self.font_name,
+                size_hint_y=None, height=dp(34), font_size=dp(11),
+                glass_color=(.08,.13,.21,.82), color=(.80,1,.92,1),
             )
-            takeout_button.bind(on_release=lambda _button: self.select_home_cafeteria_group('' if expanded else 'takeout'))
+            takeout_button.bind(on_release=lambda _button, item=dict(restaurant), groups=[dict(group) for group in takeout_groups]: self.popup_takeout_choices(item, groups))
             menu_list.add_widget(takeout_button)
-            selected_takeouts = {row['title'] for row in self.store.takeout_choices(self.selected_cafeteria_meal)}
-            for group, row_height, menu_text in zip(takeout_groups, takeout_heights, takeout_lines):
-                takeout_title = str(group.get('menu') or '')
-                selected_takeout = takeout_title in selected_takeouts
-                row = RoundedCard(orientation='horizontal', size_hint_y=None, height=row_height,
-                                  radius=dp(10), padding=(dp(10), 0), spacing=dp(4),
-                                  surface_color=[.05,.58,.50,1] if selected_takeout else [.065,.09,.145,1],
-                                  surface_opacity=.96 if selected_takeout else .50,
-                                  background_color=[1,1,1,.90] if selected_takeout else [0,0,0,0],
-                                  border_color=[0,0,0,0], rim_strength=0)
-                item_button = Button(text=menu_text, font_name=self.font_name, font_size=dp(11), halign='left', valign='middle',
-                                     background_normal='', background_color=(0,0,0,0),
-                                     color=(.84,1,.93,1) if selected_takeout else (.86,.91,.96,1), shorten=False)
-                item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
-                item_button.bind(on_release=lambda _b, meal_key=self.selected_cafeteria_meal, title=takeout_title, nutrients=group.get('nutrition', {}): self.choose_takeout_meal(meal_key, title, nutrients))
-                row.add_widget(item_button)
-                detail = GlassButton(text='···', font_name=self.font_name, size_hint_x=None, width=dp(38), font_size=dp(13),
-                                     glass_color=(.05,.58,.50,.88) if selected_takeout else (.11,.16,.25,.86),
-                                     color=(.88,1,.95,1) if selected_takeout else (.78,.87,1,1))
-                detail.bind(on_release=lambda _button, item=dict(group): self.popup_cafeteria_detail(item))
-                row.add_widget(detail)
-                menu_list.add_widget(row)
-                if selected_takeout and getattr(self, '_takeout_flash', None) == (self.selected_cafeteria_meal, takeout_title):
-                    Clock.schedule_once(lambda _dt, target=row: (Animation(surface_color=[.36,1,.89,1], duration=.12) + Animation(surface_color=[.05,.58,.50,1], duration=.58)).start(target), 0)
         card.add_widget(menu_list)
         restaurant_box.add_widget(card)
         self._update_cafeteria_widget(restaurant, displayed_groups)
@@ -1895,6 +1908,11 @@ class WelltableApp(App):
         # Only Health Connect's ActiveCaloriesBurned record belongs here;
         # total energy is deliberately excluded.
         today_kcal = max(0, int(profile.get('active_calories') or 0))
+        # Some Samsung Health providers expose no usable activity record.
+        # In that case the UI falls back to their total, rather than claiming
+        # that an otherwise active day burned 0 kcal.
+        if today_kcal <= 0:
+            today_kcal = max(0, int(profile.get('total_calories') or 0))
         distance_meters = int(profile.get('distance_meters') or 0)
         step_goal = max(1, int(profile.get('target_steps') or 6300))
         exercise_calorie_goal = max(1, int(profile.get('target_exercise_calories') or 300))
@@ -2014,6 +2032,60 @@ class WelltableApp(App):
         scroll.add_widget(label); box.add_widget(scroll)
         popup = Popup(content=box, title='', size_hint=(.92,.72), background='', background_color=(0,0,0,0))
         holder['popup'] = popup; popup.open()
+
+    def popup_takeout_choices(self, restaurant, groups):
+        """Show every non-main cafeteria menu in a bounded, scrollable picker."""
+        box = RoundedCard(orientation='vertical', padding=dp(18), spacing=dp(10), radius=dp(26))
+        meal_label = self.meal_names.get(self.selected_cafeteria_meal, '식사')
+        header, holder = self._dialog_header('테이크아웃 메뉴', f"{restaurant.get('name', '')} · {meal_label} · 여러 메뉴를 선택할 수 있어요.")
+        box.add_widget(header)
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(3))
+        list_box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(7), padding=(0, dp(2)))
+        list_box.bind(minimum_height=list_box.setter('height'))
+        selected_takeouts = {row['title'] for row in self.store.takeout_choices(self.selected_cafeteria_meal)}
+
+        for group in groups:
+            menu_raw = str(group.get('menu') or '')
+            menu_text = re.sub(r'\s*(?: · |,)\s*', '\n', menu_raw)
+            group_title = str(group.get('title') or '')
+            takeout_title = menu_raw if group_title in ('', '오늘의 메뉴') else f'{group_title} · {menu_raw}'
+            selected = takeout_title in selected_takeouts
+            line_count = max(1, len(menu_text.splitlines()))
+            row = RoundedCard(orientation='horizontal', size_hint_y=None,
+                              height=dp(max(58, 19 * line_count + 18)), radius=dp(12),
+                              padding=(dp(10), dp(4)), spacing=dp(6),
+                              surface_color=[.05,.58,.50,1] if selected else [.065,.09,.145,1],
+                              surface_opacity=.96 if selected else .58,
+                              background_color=[1,1,1,.90] if selected else [0,0,0,0],
+                              border_color=[0,0,0,0], rim_strength=0)
+            item_button = Button(text=(menu_text if group_title in ('', '오늘의 메뉴') else f'{group_title}\n{menu_text}'), font_name=self.font_name, font_size=dp(11),
+                                 halign='left', valign='middle', background_normal='', background_color=(0,0,0,0),
+                                 color=(.84,1,.93,1) if selected else (.86,.91,.96,1), shorten=False)
+            item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
+            def toggle(_button, meal_key=self.selected_cafeteria_meal, title=takeout_title,
+                       nutrients=group.get('nutrition', {}), source_group=dict(group)):
+                result = self.store.toggle_takeout_choice(meal_key, title, nutrients)
+                if result is None:
+                    self._health_notice('완료된 식단이에요', '오늘의 식단 블록을 다시 눌러 완료를 해제한 뒤 변경할 수 있어요.')
+                    return
+                self._takeout_flash = (meal_key, title) if result else None
+                holder['popup'].dismiss()
+                self.refresh_home()
+                Clock.schedule_once(lambda _dt: self.popup_takeout_choices(restaurant, groups), .05)
+            item_button.bind(on_release=toggle)
+            row.add_widget(item_button)
+            detail = GlassButton(text='···', font_name=self.font_name, size_hint=(None, None),
+                                 size=(dp(38), dp(32)), pos_hint={'center_y': .5}, font_size=dp(13),
+                                 glass_color=(.05,.58,.50,.88) if selected else (.11,.16,.25,.86),
+                                 color=(.88,1,.95,1) if selected else (.78,.87,1,1))
+            detail.bind(on_release=lambda _button, item=dict(group): self.popup_cafeteria_detail(item))
+            row.add_widget(detail)
+            list_box.add_widget(row)
+        scroll.add_widget(list_box)
+        box.add_widget(scroll)
+        popup = Popup(content=box, title='', size_hint=(.94, .80), background='', background_color=(0,0,0,0))
+        holder['popup'] = popup
+        popup.open()
 
     def line_item(self,title,tag,detail,tail):
         return ListLine(title=title, tag=tag, detail=detail, tail=tail)

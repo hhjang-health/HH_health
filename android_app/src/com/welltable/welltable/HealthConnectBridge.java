@@ -383,8 +383,8 @@ public final class HealthConnectBridge {
         // subtracting elapsed resting energy; never display the raw total.
         // This matches Samsung Health's '활동 칼로리' card while retaining the
         // dedicated ActiveCalories record whenever the provider offers it.
+        double totalCalories = 0d;
         if (activeCalories <= 0d) {
-            double totalCalories = 0d;
             for (TotalCaloriesBurnedRecord item : read(client, TotalCaloriesBurnedRecord.class,
                     TimeRangeFilter.between(todayStart, tomorrowStart))) {
                 totalCalories += item.getEnergy().getKilocalories();
@@ -399,6 +399,9 @@ public final class HealthConnectBridge {
             }
         }
         payload.put("active_calories", Math.round(activeCalories));
+        // Keep the total only as a last-resort display fallback.  The Python
+        // UI always prefers the dedicated/derived activity value above.
+        payload.put("total_calories", Math.round(totalCalories));
 
         double distanceMeters = 0d;
         for (DistanceRecord item : read(client, DistanceRecord.class,

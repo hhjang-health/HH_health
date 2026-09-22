@@ -725,11 +725,13 @@
             id: update_button
             text: '업데이트'
             font_name: app.font_name
-            font_size: dp(9)
+            font_size: dp(12)
             size_hint: None, None
-            size: dp(76), dp(29)
-            pos: root.right - dp(100), root.top - dp(58)
-            glass_color: .92,.31,.08,.54
+            size: dp(114), dp(44)
+            # Place the release action beside the member greeting instead of
+            # the status-bar edge, where it was too easy to miss.
+            pos: root.right - dp(138), root.top - dp(153)
+            glass_color: .92,.31,.08,.30
             color: 1,.91,.82,1
             opacity: 1 if app.update_available else 0
             disabled: not app.update_available
