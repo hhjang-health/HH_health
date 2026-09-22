@@ -51,7 +51,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.0.5'
+APP_VERSION = '2.0.6'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1558,12 +1558,13 @@ class WelltableApp(App):
         capacity = max(12, (Window.width - dp(180)) / dp(12))
         row_heights = [dp(max(84, 19 * sum(max(1, math.ceil(len(line) / capacity)) for line in text.splitlines()) + 16)) for text in menu_lines]
         card_height = dp(128) + sum(row_heights)
-        # The cafeteria widget intentionally uses a clearer glass face than
-        # the dense meal cards, keeping the home backdrop visible behind it.
+        # Use the same dark-glass surface as the other home cards.  A more
+        # opaque blue cafeteria panel made this one section look detached
+        # from the main page even though it is part of the same card system.
         card = RoundedCard(orientation='vertical', size_hint_y=None, height=card_height, radius=dp(24),
                            padding=(dp(14), dp(12)), spacing=dp(6),
-                           surface_color=[.13,.25,.37,1], surface_opacity=.64,
-                           background_color=[.13,.25,.37,.78], border_color=[.76,.90,1,.20])
+                           surface_color=[.055,.087,.145,1], surface_opacity=.50,
+                           background_color=[.055,.087,.145,.50], border_color=[.72,.84,1,.26])
         title_row = BoxLayout(size_hint_y=None, height=dp(22))
         title_row.add_widget(Label(text=f"오늘의 구내식당  ·  {restaurant['name']}", font_name=self.font_name, font_size=dp(13), bold=True,
                                    color=(.90,1,.96,1), halign='left', valign='middle', text_size=(dp(250), dp(22)), shorten=True))
@@ -1779,7 +1780,9 @@ class WelltableApp(App):
         # not substitute session totals here: Samsung Health's activity time
         # and activity calories are different metrics from exercise sessions.
         today_minutes = int(profile.get('active_minutes') or 0)
-        today_kcal = int(profile.get('active_calories') or 0)
+        # Only Health Connect's ActiveCaloriesBurned record belongs here;
+        # total energy is deliberately excluded.
+        today_kcal = max(0, int(profile.get('active_calories') or 0))
         distance_meters = int(profile.get('distance_meters') or 0)
         step_goal = max(1, int(profile.get('target_steps') or 6300))
         exercise_calorie_goal = max(1, int(profile.get('target_exercise_calories') or 300))

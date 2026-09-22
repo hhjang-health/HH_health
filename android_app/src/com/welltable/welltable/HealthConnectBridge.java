@@ -367,8 +367,12 @@ public final class HealthConnectBridge {
         // from exactly the same local-day range as steps so every number on
         // the tile refers to the same day.
         double activeCalories = 0d;
+        // Samsung Health can publish today's activity calories as an
+        // interval whose end is the next local midnight.  Querying only up
+        // to "now" excludes that still-open interval and incorrectly shows
+        // 0 kcal.  This is still *activity* energy only, never total energy.
         for (ActiveCaloriesBurnedRecord item : read(client, ActiveCaloriesBurnedRecord.class,
-                TimeRangeFilter.between(todayStart, now))) {
+                TimeRangeFilter.between(todayStart, tomorrowStart))) {
             activeCalories += item.getEnergy().getKilocalories();
         }
         // Do not fall back to TotalCaloriesBurnedRecord: that value includes
@@ -378,7 +382,7 @@ public final class HealthConnectBridge {
 
         double distanceMeters = 0d;
         for (DistanceRecord item : read(client, DistanceRecord.class,
-                TimeRangeFilter.between(todayStart, now))) {
+                TimeRangeFilter.between(todayStart, tomorrowStart))) {
             distanceMeters += item.getDistance().getMeters();
         }
         payload.put("distance_meters", Math.round(distanceMeters));
