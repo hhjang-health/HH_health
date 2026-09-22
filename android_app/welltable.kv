@@ -1,0 +1,1756 @@
+#:import dp kivy.metrics.dp
+#:import NoTransition kivy.uix.screenmanager.NoTransition
+#:import ScrollEffect kivy.effects.scroll.ScrollEffect
+#:import HorizontalBlurEffect kivy.uix.effectwidget.HorizontalBlurEffect
+#:import VerticalBlurEffect kivy.uix.effectwidget.VerticalBlurEffect
+
+<Popup>:
+    # Suppress the platform popup separator. On Samsung devices this was
+    # rendered as a stray cyan line above a few dialogs.
+    separator_color: 0, 0, 0, 0
+
+<RoundedCard>:
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, .10
+        RoundedRectangle:
+            pos: self.x, self.y - dp(3)
+            size: self.size
+            radius: [self.radius]
+        Color:
+            # Every RoundedCard is a surface of glass, even when a feature
+            # passes in its own tint. This keeps the backdrop visible.
+            rgba: root.surface_color[0],root.surface_color[1],root.surface_color[2],self.background_color[3] * self.surface_opacity
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+        # One continuous neutral rim: no isolated top line or coloured edge.
+        # Wider low-alpha falloff blends the rim into the curved glass face.
+        Color:
+            rgba: 1,1,1,.018 * self.rim_strength
+        Line:
+            rounded_rectangle: self.x + dp(1.8), self.y + dp(1.8), self.width - dp(3.6), self.height - dp(3.6), max(1,self.radius - dp(1.8)), 48
+            width: dp(2.4)
+        Color:
+            rgba: 1,1,1,.033 * self.rim_strength
+        Line:
+            rounded_rectangle: self.x + dp(.8), self.y + dp(.8), self.width - dp(1.6), self.height - dp(1.6), max(1,self.radius - dp(.8)), 48
+            width: dp(1.2)
+        Color:
+            rgba: 1,1,1,.10 * self.rim_strength
+        Line:
+            rounded_rectangle: self.x + dp(.4), self.y + dp(.4), self.width - dp(.8), self.height - dp(.8), max(1,self.radius - dp(.4)), 48
+            width: dp(.55)
+
+<LinearBackdrop>:
+    canvas:
+        Color:
+            rgba: 1,1,1,1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+            texture: root.backdrop_texture()
+
+<ProgressRing>:
+    canvas.before:
+        Color:
+            rgba: .025, .038, .070, .82
+        Line:
+            circle: self.center_x, self.center_y, min(self.width, self.height) / 2 - dp(5), 0, 360
+            width: dp(5)
+        Color:
+            rgba: .38, .67, 1, .98
+        Line:
+            circle: self.center_x, self.center_y, min(self.width, self.height) / 2 - dp(5), 90, 90 + 360 * root.progress
+            width: dp(5)
+    Label:
+        text: root.value
+        font_name: app.font_name
+        font_size: dp(14)
+        bold: True
+        color: 1, 1, 1, 1
+        pos: root.pos
+        size: root.size
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+
+<MealCard>:
+    size_hint_y: None
+    height: dp(74)
+    padding: dp(12), dp(8)
+    spacing: dp(10)
+    on_release: app.toggle_meal(root.meal_type)
+    canvas.before:
+        Color:
+            rgba: (.10, .84, .74, .20) if root.completed else (0, 0, 0, 0)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(18)]
+        Color:
+            rgba: (.30, 1, .88, .12 * root.glow)
+        Line:
+            rounded_rectangle: self.x + dp(1), self.y + dp(1), self.width - dp(2), self.height - dp(2), dp(17)
+            width: dp(1) + dp(3) * root.glow
+        Color:
+            rgba: (.95, .97, 1, .07) if root.divider else (0, 0, 0, 0)
+        Rectangle:
+            pos: self.x + dp(12), self.top - dp(1)
+            size: self.width - dp(24), dp(1)
+    BoxLayout:
+        size_hint_x: None
+        width: dp(42)
+        canvas.before:
+            Color:
+                rgba: root.color
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [dp(14)]
+        Label:
+            text: root.badge
+            font_name: app.font_name
+            color: .95,.97,1,1
+            font_size: dp(10)
+            bold: True
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 0, dp(2)
+        Label:
+            text: root.title
+            font_name: app.font_name
+            font_size: dp(14)
+            bold: True
+            color: .96, .97, 1, 1
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+            shorten: True
+        Label:
+            text: root.foods
+            font_name: app.font_name
+            font_size: dp(10)
+            color: .62, .68, .78, 1
+            halign: 'left'
+            valign: 'middle'
+            shorten: True
+            text_size: self.size
+        Label:
+            text: (root.calories + '  ·  ' + root.protein) if root.calories else ''
+            font_name: app.font_name
+            font_size: dp(9)
+            color: .56, .67, .88, 1
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+    GlassButton:
+        id: done
+        size_hint: None, None
+        size: dp(44), dp(28)
+        background_normal: ''
+        background_down: ''
+        color: 1, 1, 1, 1
+        font_name: app.font_name
+        font_size: dp(9)
+        pos_hint: {'center_y': .5}
+        on_release: app.clear_cafeteria_meal(root.meal_type) if root.cafeteria else app.toggle_meal(root.meal_type)
+    GlassButton:
+        id: add
+        text: '+'
+        size_hint: None, None
+        size: dp(32), dp(32)
+        pos_hint: {'center_y': .5}
+        font_name: app.font_name
+        font_size: dp(18)
+        color: .86,.92,1,1
+        on_release: app.popup_manual_meal(root.meal_type)
+<ListLine>:
+    orientation: 'vertical'
+    size_hint_y: None
+    height: dp(74)
+    padding: dp(15), dp(10)
+    canvas.before:
+        Color:
+            rgba: .065,.084,.118,.38
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(20)]
+        Color:
+            rgba: .95,.97,1,.13
+        Line:
+            rounded_rectangle: self.x,self.y,self.width,self.height,dp(20)
+            width: 1
+    BoxLayout:
+        Label:
+            text: root.icon
+            font_name: 'WelltableSymbols'
+            font_size: dp(23)
+            color: .94,.96,1,1
+            size_hint_x: None
+            width: dp(30) if root.icon else 0
+        Label:
+            text: root.title
+            font_name: app.font_name
+            bold: True
+            font_size: dp(13)
+            color: .96,.97,1,1
+            halign: 'left'
+            shorten: True
+            text_size: self.size
+        Label:
+            text: root.tag
+            font_name: app.font_name
+            font_size: dp(10)
+            color: .55,.73,1,1
+            halign: 'right'
+            shorten: True
+            text_size: self.size
+    BoxLayout:
+        Label:
+            text: root.detail
+            font_name: app.font_name
+            font_size: dp(10)
+            color: .63,.70,.83,1
+            halign: 'left'
+            shorten: True
+            text_size: self.size
+        Label:
+            text: root.tail
+            font_name: app.font_name
+            font_size: dp(10)
+            color: .63,.70,.83,1
+            halign: 'right'
+            shorten: True
+            text_size: self.size
+
+<SwipeWorkout>:
+    # A warm red reveal makes the destructive swipe clear before release.
+    canvas.before:
+        Color:
+            rgba: .42,.07,.12, min(.96, abs(root.swipe_offset) / dp(88))
+        RoundedRectangle:
+            pos: self.x, self.y
+            size: self.width, self.height
+            radius: [dp(20)]
+        Color:
+            rgba: .96,.30,.36, min(.95, abs(root.swipe_offset) / dp(70))
+        Rectangle:
+            pos: self.right - dp(96), self.y
+            size: dp(96), self.height
+        Color:
+            rgba: 1,1,1, min(1, abs(root.swipe_offset) / dp(72))
+        Rectangle:
+            pos: self.right - dp(68), self.center_y - dp(1)
+            size: dp(38), dp(1)
+    canvas.after:
+        Color:
+            rgba: 1,.78,.80, min(1, abs(root.swipe_offset) / dp(72))
+        Rectangle:
+            pos: self.right - dp(56), self.center_y + dp(9)
+            size: dp(1), dp(1)
+
+<NavButton@Button>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0,0,0,0
+    color: .62,.68,.80,1
+    font_name: app.font_name
+    font_size: dp(11)
+
+<GlassButton>:
+    background_normal: ''
+    background_down: ''
+    background_color: 0,0,0,0
+    glass_color: .10,.16,.27,.42
+    color: .82,.89,1,1
+    font_name: app.font_name
+    font_size: dp(10)
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, .28
+        RoundedRectangle:
+            pos: self.x, self.y - dp(1)
+            size: self.size
+            radius: [self.height / 2]
+        Color:
+            rgba: .17,.20,.26,self.glass_color[3] * .65
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.height / 2]
+        Color:
+            rgba: .92,.96,1,.16
+        Line:
+            rounded_rectangle: self.x, self.y, self.width, self.height, self.height / 2
+            width: 1
+        Color:
+            rgba: 1, 1, 1, .045
+        Line:
+            points: self.x + self.height / 2, self.top - dp(1), self.right - self.height / 2, self.top - dp(1)
+            width: 1
+
+<CafeteriaTab>:
+    canvas.before:
+        Color:
+            rgba: (.05,.58,.50,.96) if root.selected else (0,0,0,0)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.height / 2]
+
+<GlassInput>:
+    background_normal: ''
+    background_active: ''
+    background_color: 0,0,0,0
+    # Values are deliberately high contrast. Only placeholders are muted.
+    foreground_color: 1,1,1,1
+    disabled_foreground_color: 1,1,1,1
+    selection_color: .25,.48,.92,.55
+    hint_text_color: .52,.58,.70,1
+    cursor_color: .65,.78,1,1
+    canvas.before:
+        Color:
+            # Profile and manual-entry fields intentionally use an almost
+            # opaque surface so the values never blend into the modal behind.
+            rgba: .008,.014,.028,.995
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(15)]
+        Color:
+            rgba: .90,.96,1,.28
+        Line:
+            rounded_rectangle: self.x,self.y,self.width,self.height,dp(15)
+            width: 1
+        # The border's translucent Color above otherwise remains active for
+        # TextInput's glyph canvas. Restore the value colour *after* drawing
+        # the border so every typed character is rendered as solid white.
+        Color:
+            rgba: self.disabled_foreground_color if self.disabled else self.foreground_color
+
+<TopScrollMask>:
+    size_hint: 1, None
+    height: dp(82)
+    canvas:
+        # One continuous alpha texture — deliberately not stacked rectangles.
+        # This is the fixed, frosted status-safe layer above scrolling content.
+        Color:
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+            texture: root.scroll_mask_texture()
+
+<DockItem>:
+    orientation: 'vertical'
+    padding: 0, dp(3)
+    spacing: dp(1)
+    canvas.before:
+        Color:
+            rgba: (1,1,1,.13) if root.active else (0,0,0,0)
+        RoundedRectangle:
+            pos: self.x + dp(7), self.y + dp(4)
+            size: self.width - dp(14), self.height - dp(8)
+            radius: [dp(17)]
+    Label:
+        text: root.icon
+        font_name: 'WelltableSymbols'
+        font_size: dp(17)
+        color: (.72,.82,1,1) if root.active else (.53,.59,.70,1)
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+    Label:
+        text: root.label
+        font_name: app.font_name
+        font_size: dp(9)
+        bold: root.active
+        color: (.77,.85,1,1) if root.active else (.53,.59,.70,1)
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+
+<AppDock>:
+    background_color: .025,.048,.080,.98
+    surface_opacity: .95
+    rim_strength: .4
+    border_color: .92,.95,1,.25
+    radius: dp(26)
+    padding: dp(7), dp(3)
+    DockItem:
+        icon: '\ue88a'
+        label: '홈'
+        active: root.selected == 'home'
+        on_release: app.show('home')
+    DockItem:
+        icon: '\ue56c'
+        label: '식단'
+        active: root.selected == 'meals'
+        on_release: app.show('meals')
+    DockItem:
+        icon: '\ueb43'
+        label: '운동'
+        active: root.selected == 'workouts'
+        on_release: app.show('workouts')
+    DockItem:
+        icon: '\ue26b'
+        label: '리포트'
+        active: root.selected == 'report'
+        on_release: app.show('report')
+    DockItem:
+        icon: '\ue7fd'
+        label: '내 정보'
+        active: root.selected == 'body'
+        on_release: app.show('body')
+
+<TrendBar>:
+    orientation: 'vertical'
+    spacing: dp(4)
+    Widget:
+        canvas.before:
+            Color:
+                rgba: .12,.15,.22,.75
+            RoundedRectangle:
+                pos: self.center_x - dp(3), self.y + dp(2)
+                size: dp(6), self.height - dp(2)
+                radius: [dp(3)]
+            Color:
+                rgba: (.48,.63,1,.88) if root.active else (.32,.40,.62,.72)
+            RoundedRectangle:
+                pos: self.center_x - dp(3), self.y + dp(2)
+                size: dp(6), max(dp(8), (self.height - dp(2)) * root.level)
+                radius: [dp(3)]
+    Label:
+        text: root.day
+        font_name: app.font_name
+        size_hint_y: None
+        height: dp(16)
+        font_size: dp(9)
+        color: (.72,.81,1,1) if root.active else (.52,.58,.69,1)
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.size
+
+<HomeScreen>:
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: .035,.046,.073,1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        LinearBackdrop:
+            pos: root.pos
+            size: root.size
+        ScrollView:
+            id: home_scroll
+            size_hint: 1, None
+            height: max(0, root.height - dp(76))
+            pos: root.x, root.y + dp(76)
+            do_scroll_x: False
+            scroll_x: 0
+            bar_width: 0
+            # Direct scrolling prevents the heavy cards from coasting and stuttering.
+            effect_cls: ScrollEffect
+            scroll_distance: dp(6)
+            scroll_timeout: 60
+            BoxLayout:
+                orientation: 'vertical'
+                size_hint_x: None
+                width: root.width
+                size_hint_y: None
+                height: self.minimum_height
+                # Leave a deliberate visual buffer below Android's status bar.
+                padding: dp(24), dp(74), dp(24), dp(38)
+                spacing: dp(17)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(104)
+                    orientation: 'vertical'
+                    Label:
+                        id: date_label
+                        text: '9월 17일 · 목요일'
+                        font_name: app.font_name
+                        color: .55,.60,.70,1
+                        size_hint_y: None
+                        height: dp(20)
+                        font_size: dp(10)
+                        halign: 'left'
+                        valign: 'bottom'
+                        text_size: self.size
+                    BoxLayout:
+                        orientation: 'vertical'
+                        size_hint_y: None
+                        height: dp(72)
+                        Label:
+                            id: greeting_name
+                            font_name: app.font_name
+                            text: '회원님,'
+                            bold: True
+                            font_size: min(dp(25), self.width / max(1, len(self.text)))
+                            color: .97,.98,1,1
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            id: greeting_label
+                            text: '회원님, 오늘도 나를 위한 선택을 해볼까요?'
+                            font_name: app.font_name
+                            color: .68,.76,.87,1
+                            font_size: min(dp(14), max(dp(10), self.width * 1.8 / max(1, len(self.text))))
+                            halign: 'left'
+                            valign: 'middle'
+                            max_lines: 2
+                            text_size: self.size
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(154)
+                    radius: dp(30)
+                    background_color: .055,.087,.145,.50
+                    border_color: .72,.84,1,.26
+                    padding: dp(20), dp(19)
+                    spacing: dp(12)
+                    BoxLayout:
+                        orientation: 'vertical'
+                        Label:
+                            id: nutrition_heading
+                            text: '오늘의 영양'
+                            font_name: app.font_name
+                            size_hint_y: None
+                            height: dp(22)
+                            font_size: dp(11)
+                            bold: True
+                            color: .78,.84,.96,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                        BoxLayout:
+                            size_hint_y: None
+                            height: dp(26)
+                            spacing: dp(6)
+                            Widget:
+                                size_hint_x: None
+                                width: dp(9)
+                                canvas.before:
+                                    Color:
+                                        rgba: .98,.14,.42,1
+                                    Ellipse:
+                                        pos: self.x, self.center_y - dp(4)
+                                        size: dp(8), dp(8)
+                            Label:
+                                text: '칼로리'
+                                size_hint_x: None
+                                width: dp(41)
+                                font_name: app.font_name
+                                font_size: dp(10)
+                                color: .66,.74,.88,1
+                                halign: 'left'
+                                text_size: self.size
+                            Label:
+                                id: kcal_current
+                                text: '1,703'
+                                size_hint_x: None
+                                width: dp(54)
+                                font_name: app.font_name
+                                font_size: dp(16)
+                                bold: True
+                                color: .96,.98,1,1
+                                halign: 'right'
+                                text_size: self.size
+                            Label:
+                                id: kcal_target
+                                text: '/ 1,800'
+                                font_name: app.font_name
+                                font_size: dp(10)
+                                color: .33,.39,.51,1
+                                halign: 'left'
+                                valign: 'middle'
+                                text_size: self.size
+                        BoxLayout:
+                            size_hint_y: None
+                            height: dp(26)
+                            spacing: dp(6)
+                            Widget:
+                                size_hint_x: None
+                                width: dp(9)
+                                canvas.before:
+                                    Color:
+                                        rgba: .68,.96,.05,1
+                                    Ellipse:
+                                        pos: self.x, self.center_y - dp(4)
+                                        size: dp(8), dp(8)
+                            Label:
+                                text: '단백질'
+                                size_hint_x: None
+                                width: dp(41)
+                                font_name: app.font_name
+                                font_size: dp(10)
+                                color: .66,.74,.88,1
+                                halign: 'left'
+                                text_size: self.size
+                            Label:
+                                id: protein_current
+                                text: '96g'
+                                size_hint_x: None
+                                width: dp(54)
+                                font_name: app.font_name
+                                font_size: dp(16)
+                                bold: True
+                                color: .96,.98,1,1
+                                halign: 'right'
+                                text_size: self.size
+                            Label:
+                                id: protein_target
+                                text: '/ 100g'
+                                font_name: app.font_name
+                                font_size: dp(10)
+                                color: .33,.39,.51,1
+                                halign: 'left'
+                                valign: 'middle'
+                                text_size: self.size
+                        BoxLayout:
+                            size_hint_y: None
+                            height: dp(26)
+                            spacing: dp(6)
+                            Widget:
+                                size_hint_x: None
+                                width: dp(9)
+                                canvas.before:
+                                    Color:
+                                        rgba: .04,.91,.82,1
+                                    Ellipse:
+                                        pos: self.x, self.center_y - dp(4)
+                                        size: dp(8), dp(8)
+                            Label:
+                                text: '탄수화물'
+                                size_hint_x: None
+                                width: dp(41)
+                                font_name: app.font_name
+                                font_size: dp(10)
+                                color: .66,.74,.88,1
+                                halign: 'left'
+                                text_size: self.size
+                            Label:
+                                id: carbs_current
+                                text: '214g'
+                                size_hint_x: None
+                                width: dp(54)
+                                font_name: app.font_name
+                                font_size: dp(16)
+                                bold: True
+                                color: .96,.98,1,1
+                                halign: 'right'
+                                text_size: self.size
+                            Label:
+                                id: carbs_target
+                                text: '/ 220g'
+                                font_name: app.font_name
+                                font_size: dp(10)
+                                color: .33,.39,.51,1
+                                halign: 'left'
+                                valign: 'middle'
+                                text_size: self.size
+                    NutritionRings:
+                        id: nutrition_rings
+                        size_hint_x: None
+                        width: dp(102)
+                BoxLayout:
+                    id: restaurant_box
+                    orientation: 'vertical'
+                    size_hint_y: None
+                    height: self.minimum_height
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(34)
+                    Label:
+                        text: '오늘의 식단'
+                        font_name: app.font_name
+                        font_size: dp(20)
+                        bold: True
+                        color: .98,.98,1,1
+                        halign: 'left'
+                        text_size: self.size
+                    GlassButton:
+                        text: '새로 추천'
+                        font_name: app.font_name
+                        font_size: dp(11)
+                        size_hint_x: None
+                        width: dp(95)
+                        background_normal: ''
+                        glass_color: .10,.14,.22,.54
+                        color: .72,.80,.94,1
+                        on_release: app.new_plan()
+                BoxLayout:
+                    id: plan_box
+                    orientation: 'vertical'
+                    size_hint_y: None
+                    height: self.minimum_height
+                    spacing: dp(9)
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(62)
+                    radius: dp(20)
+                    background_color: .045,.070,.118,.43
+                    border_color: .95,.97,1,.17
+                    padding: dp(14), dp(8)
+                    BoxLayout:
+                        orientation: 'vertical'
+                        Label:
+                            text: '오늘 완료한 식사'
+                            font_name: app.font_name
+                            font_size: dp(10)
+                            color: .67,.75,.90,1
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            id: done_count
+                            text: '0 / 3'
+                            font_name: app.font_name
+                            font_size: dp(18)
+                            bold: True
+                            color: 1,1,1,1
+                            halign: 'left'
+                            text_size: self.size
+                    Label:
+                        text: '한 끼씩\n가볍게 채워요'
+                        font_name: app.font_name
+                        font_size: dp(10)
+                        color: .67,.75,.90,1
+                        halign: 'right'
+                        valign: 'middle'
+                        text_size: self.size
+        GlassButton:
+            id: update_button
+            text: '업데이트'
+            font_name: app.font_name
+            font_size: dp(9)
+            size_hint: None, None
+            size: dp(76), dp(29)
+            pos: root.right - dp(100), root.top - dp(58)
+            glass_color: .92,.31,.08,.54
+            color: 1,.91,.82,1
+            opacity: 1 if app.update_available else 0
+            disabled: not app.update_available
+            on_release: app.popup_update()
+        TopScrollMask:
+            pos: root.x, root.top - self.height
+        AppDock:
+            size_hint: None, None
+            size: root.width - dp(40), dp(54)
+            pos: root.x + dp(20), root.y + dp(10)
+            selected: 'home'
+
+<MealsScreen>:
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: .035,.046,.073,1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        LinearBackdrop:
+            pos: root.pos
+            size: root.size
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint: 1, None
+            pos: root.x, root.y + dp(76)
+            size: root.width, max(0, root.height - dp(76))
+            BoxLayout:
+                size_hint_y: None
+                height: dp(150)
+                padding: dp(24),dp(68),dp(24),dp(12)
+                BoxLayout:
+                    orientation: 'vertical'
+                    Label:
+                        text: '식단 라이브러리'
+                        font_name: app.font_name
+                        color: .55,.60,.70,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        valign: 'bottom'
+                        text_size: self.size
+                    Label:
+                        text: '나의 식단 세트'
+                        font_name: app.font_name
+                        font_size: dp(27)
+                        bold: True
+                        color: .98,.98,1,1
+                        halign: 'left'
+                        valign: 'top'
+                        text_size: self.size
+                GlassButton:
+                    text: '+ 세트 만들기'
+                    size_hint: None, None
+                    size: dp(104), dp(38)
+                    font_size: dp(10)
+                    on_release: app.popup_meal_set()
+            ScrollView:
+                id: meals_scroll
+                do_scroll_x: False
+                bar_width: 0
+                effect_cls: ScrollEffect
+                scroll_distance: dp(6)
+                scroll_timeout: 60
+                BoxLayout:
+                    id: set_box
+                    orientation: 'vertical'
+                    spacing: dp(9)
+                    padding: dp(24),dp(4),dp(24),dp(20)
+                    size_hint_x: None
+                    width: root.width
+                    size_hint_y: None
+                    height: self.minimum_height
+        TopScrollMask:
+            pos: root.x, root.top - self.height
+        AppDock:
+            size_hint: None, None
+            size: root.width - dp(40), dp(54)
+            pos: root.x + dp(20), root.y + dp(10)
+            selected: 'meals'
+
+<WorkoutScreen>:
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: .035,.046,.073,1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        LinearBackdrop:
+            pos: root.pos
+            size: root.size
+        ScrollView:
+            id: workouts_page_scroll
+            size_hint: 1, None
+            pos: root.x, root.y + dp(76)
+            size: root.width, max(0, root.height - dp(76))
+            do_scroll_x: False
+            bar_width: 0
+            effect_cls: ScrollEffect
+            scroll_distance: dp(6)
+            scroll_timeout: 60
+            BoxLayout:
+                orientation: 'vertical'
+                size_hint_x: None
+                width: root.width
+                size_hint_y: None
+                height: self.minimum_height
+                padding: 0, dp(74), 0, dp(86)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(82)
+                    padding: dp(24),dp(0),dp(24),dp(12)
+                    BoxLayout:
+                        orientation: 'vertical'
+                        Label:
+                            text: '기록'
+                            font_name: app.font_name
+                            color: .55,.60,.70,1
+                            font_size: dp(10)
+                            halign: 'left'
+                            valign: 'bottom'
+                            text_size: self.size
+                        Label:
+                            text: '운동'
+                            font_name: app.font_name
+                            font_size: dp(27)
+                            bold: True
+                            color: .98,.98,1,1
+                            halign: 'left'
+                            valign: 'top'
+                            text_size: self.size
+                    GlassButton:
+                        text: '연결'
+                        size_hint: None, None
+                        size: dp(52), dp(38)
+                        font_size: dp(10)
+                        glass_color: .15,.34,.64,.50
+                        on_release: app.open_health_connect()
+                    GlassButton:
+                        text: '동기화'
+                        size_hint: None, None
+                        size: dp(62), dp(38)
+                        font_size: dp(10)
+                        glass_color: .18,.42,.78,.56
+                        on_release: app.sync_health()
+                    GlassButton:
+                        text: '+'
+                        size_hint: None, None
+                        size: dp(38), dp(38)
+                        font_size: dp(21)
+                        bold: False
+                        glass_color: .12,.22,.40,.46
+                        color: .82,.88,1,1
+                        on_release: app.popup_workout()
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(204)
+                    padding: dp(24),dp(4),dp(24),dp(12)
+                    RoundedCard:
+                        orientation: 'vertical'
+                        radius: dp(28)
+                        background_color: .034,.050,.080,.80
+                        border_color: .86,.94,1,.18
+                        padding: dp(19),dp(15)
+                        Label:
+                            text: '일일 활동'
+                            size_hint_y: None
+                            height: dp(25)
+                            font_name: app.font_name
+                            color: .92,.95,1,1
+                            font_size: dp(12)
+                            bold: True
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                        BoxLayout:
+                            spacing: dp(4)
+                            BoxLayout:
+                                size_hint_x: .53
+                                orientation: 'vertical'
+                                spacing: dp(2)
+                                padding: 0,dp(4),0,0
+                                Label:
+                                    id: activity_steps
+                                    text: '●  0 걸음'
+                                    font_name: app.font_name
+                                    font_size: dp(16)
+                                    bold: True
+                                    color: .97,1,.97,1
+                                    halign: 'left'
+                                    valign: 'middle'
+                                    text_size: self.size
+                                    markup: True
+                                Label:
+                                    id: activity_minutes
+                                    text: '●  0 분'
+                                    font_name: app.font_name
+                                    font_size: dp(16)
+                                    bold: True
+                                    color: .97,1,.97,1
+                                    halign: 'left'
+                                    valign: 'middle'
+                                    text_size: self.size
+                                    markup: True
+                                Label:
+                                    id: activity_kcal
+                                    text: '●  0 kcal'
+                                    font_name: app.font_name
+                                    font_size: dp(16)
+                                    bold: True
+                                    color: .97,1,.97,1
+                                    halign: 'left'
+                                    valign: 'middle'
+                                    text_size: self.size
+                                    markup: True
+                                Label:
+                                    id: activity_distance
+                                    text: '—'
+                                    font_name: app.font_name
+                                    font_size: dp(11)
+                                    color: .66,.74,.88,1
+                                    halign: 'left'
+                                    valign: 'middle'
+                                    text_size: self.size
+                            ActivityRings:
+                                id: activity_rings
+                                size_hint_x: .47
+                                size_hint_y: .96
+                                pos_hint: {'center_y': .5}
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(154)
+                    padding: dp(24),dp(0),dp(24),dp(12)
+                    RoundedCard:
+                        radius: dp(28)
+                        background_color: .034,.050,.080,.80
+                        border_color: .86,.94,1,.18
+                        padding: dp(19),dp(15)
+                        orientation: 'vertical'
+                        Label:
+                            text: '걸음'
+                            size_hint_y: None
+                            height: dp(23)
+                            font_name: app.font_name
+                            color: .92,.95,1,1
+                            font_size: dp(12)
+                            bold: True
+                            halign: 'left'
+                            text_size: self.size
+                        BoxLayout:
+                            size_hint_y: None
+                            height: dp(43)
+                            Label:
+                                id: step_card_value
+                                text: '0'
+                                font_name: app.font_name
+                                font_size: dp(34)
+                                bold: True
+                                color: 1,1,1,1
+                                halign: 'left'
+                                valign: 'middle'
+                                text_size: self.size
+                            Label:
+                                id: step_card_target
+                                text: '목표 6,300 걸음'
+                                font_name: app.font_name
+                                font_size: dp(11)
+                                color: .68,.76,.90,1
+                                halign: 'right'
+                                valign: 'middle'
+                                text_size: self.size
+                        StepProgress:
+                            id: steps_progress_bar
+                            max: 6300
+                            value: 0
+                            size_hint_y: None
+                            height: dp(16)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(196)
+                    padding: dp(24),dp(0),dp(24),dp(12)
+                    RoundedCard:
+                        radius: dp(28)
+                        background_color: .034,.050,.080,.80
+                        border_color: .86,.94,1,.18
+                        padding: dp(19),dp(16)
+                        orientation: 'vertical'
+                        Label:
+                            text: '이번 주 운동 기록'
+                            size_hint_y: None
+                            height: dp(24)
+                            font_name: app.font_name
+                            color: .92,.95,1,1
+                            font_size: dp(12)
+                            bold: True
+                            halign: 'left'
+                            text_size: self.size
+                        BoxLayout:
+                            BoxLayout:
+                                size_hint_x: .48
+                                orientation: 'vertical'
+                                padding: 0,dp(14),0,0
+                                Label:
+                                    id: week_duration
+                                    text: '0:00:00'
+                                    size_hint_y: None
+                                    height: dp(48)
+                                    font_name: app.font_name
+                                    font_size: dp(35)
+                                    bold: True
+                                    color: 1,1,1,1
+                                    halign: 'left'
+                                    valign: 'middle'
+                                    text_size: self.size
+                                Label:
+                                    id: week_sessions
+                                    text: '0개 세션'
+                                    size_hint_y: None
+                                    height: dp(22)
+                                    font_name: app.font_name
+                                    font_size: dp(12)
+                                    color: .72,.78,.88,1
+                                    halign: 'left'
+                                    text_size: self.size
+                                Label:
+                                    id: week_kcal
+                                    text: '0 kcal'
+                                    size_hint_y: None
+                                    height: dp(22)
+                                    font_name: app.font_name
+                                    font_size: dp(12)
+                                    color: .72,.78,.88,1
+                                    halign: 'left'
+                                    text_size: self.size
+                            BoxLayout:
+                                size_hint_x: .52
+                                spacing: dp(5)
+                                padding: 0, dp(12), 0, 0
+                                TrendBar:
+                                    id: week_sun
+                                    day: '일'
+                                    level: .04
+                                TrendBar:
+                                    id: week_mon
+                                    day: '월'
+                                    level: .04
+                                TrendBar:
+                                    id: week_tue
+                                    day: '화'
+                                    level: .04
+                                TrendBar:
+                                    id: week_wed
+                                    day: '수'
+                                    level: .04
+                                TrendBar:
+                                    id: week_thu
+                                    day: '목'
+                                    level: .04
+                                TrendBar:
+                                    id: week_fri
+                                    day: '금'
+                                    level: .04
+                                TrendBar:
+                                    id: week_sat
+                                    day: '토'
+                                    level: .04
+                Label:
+                    text: '최근 활동'
+                    font_name: app.font_name
+                    size_hint_y: None
+                    height: dp(46)
+                    padding_x: dp(24)
+                    font_size: dp(18)
+                    bold: True
+                    color: .98,.98,1,1
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                BoxLayout:
+                    id: workout_box
+                    orientation: 'vertical'
+                    spacing: dp(9)
+                    padding: dp(24),dp(0),dp(24),dp(20)
+                    size_hint_x: None
+                    width: root.width
+                    size_hint_y: None
+                    height: self.minimum_height
+        TopScrollMask:
+            pos: root.x, root.top - self.height
+        AppDock:
+            size_hint: None, None
+            size: root.width - dp(40), dp(54)
+            pos: root.x + dp(20), root.y + dp(10)
+            selected: 'workouts'
+
+<ReportScreen>:
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: .035,.046,.073,1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        LinearBackdrop:
+            pos: root.pos
+            size: root.size
+        ScrollView:
+            id: report_scroll
+            size_hint: 1, None
+            pos: root.x, root.y + dp(76)
+            size: root.width, max(0, root.height - dp(76))
+            do_scroll_x: False
+            bar_width: 0
+            effect_cls: ScrollEffect
+            scroll_distance: dp(6)
+            scroll_timeout: 60
+            BoxLayout:
+                orientation: 'vertical'
+                size_hint_x: None
+                width: root.width
+                size_hint_y: None
+                height: self.minimum_height
+                padding: dp(24),dp(74),dp(24),dp(20)
+                spacing: dp(16)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(62)
+                    orientation: 'vertical'
+                    Label:
+                        text: '분석'
+                        font_name: app.font_name
+                        color: .55,.60,.70,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        valign: 'bottom'
+                        text_size: self.size
+                    Label:
+                        text: '리포트'
+                        font_name: app.font_name
+                        font_size: dp(28)
+                        bold: True
+                        color: .98,.98,1,1
+                        halign: 'left'
+                        valign: 'top'
+                        text_size: self.size
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(170)
+                    radius: dp(30)
+                    background_color: .047,.071,.118,.48
+                    border_color: .95,.97,1,.17
+                    padding: dp(20),dp(17)
+                    orientation: 'vertical'
+                    Label:
+                        text: '이번 주 건강 점수'
+                        font_name: app.font_name
+                        color: .62,.70,.88,1
+                        font_size: dp(11)
+                        bold: True
+                        halign: 'left'
+                        text_size: self.size
+                    BoxLayout:
+                        Label:
+                            id: score
+                            text: '72'
+                            font_name: app.font_name
+                            font_size: dp(58)
+                            bold: True
+                            color: 1,1,1,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                        Label:
+                            text: '/ 100\n점수'
+                            font_name: app.font_name
+                            font_size: dp(12)
+                            color: .60,.67,.79,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                    Label:
+                        text: '지난주보다 12% 좋아졌어요'
+                        font_name: app.font_name
+                        font_size: dp(11)
+                        color: .60,.72,.96,1
+                        halign: 'left'
+                        text_size: self.size
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(108)
+                    spacing: dp(10)
+                    RoundedCard:
+                        background_color: .045,.067,.112,.42
+                        border_color: .95,.97,1,.16
+                        padding: dp(14),dp(12)
+                        orientation: 'vertical'
+                        Label:
+                            text: '운동 시간'
+                            font_name: app.font_name
+                            color: .60,.66,.77,1
+                            font_size: dp(10)
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            id: report_minutes
+                            text: '165분'
+                            font_name: app.font_name
+                            font_size: dp(23)
+                            bold: True
+                            color: .98,.98,1,1
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            text: '목표의 72%'
+                            font_name: app.font_name
+                            color: .58,.69,.94,1
+                            font_size: dp(10)
+                            halign: 'left'
+                            text_size: self.size
+                    RoundedCard:
+                        background_color: .045,.067,.112,.42
+                        border_color: .95,.97,1,.16
+                        padding: dp(14),dp(12)
+                        orientation: 'vertical'
+                        Label:
+                            text: '소모 칼로리'
+                            font_name: app.font_name
+                            color: .60,.66,.77,1
+                            font_size: dp(10)
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            id: report_kcal
+                            text: '1,143 kcal'
+                            font_name: app.font_name
+                            font_size: dp(20)
+                            bold: True
+                            color: .98,.98,1,1
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            text: '전주보다 +8%'
+                            font_name: app.font_name
+                            color: .58,.69,.94,1
+                            font_size: dp(10)
+                            halign: 'left'
+                            text_size: self.size
+                Label:
+                    text: '이번 주의 흐름'
+                    font_name: app.font_name
+                    size_hint_y: None
+                    height: dp(32)
+                    font_size: dp(18)
+                    bold: True
+                    color: .98,.98,1,1
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                Label:
+                    text: '신체 변화'
+                    font_name: app.font_name
+                    size_hint_y: None
+                    height: dp(32)
+                    font_size: dp(18)
+                    bold: True
+                    color: .98,.98,1,1
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(142)
+                    radius: dp(24)
+                    background_color: .045,.067,.112,.52
+                    border_color: .95,.97,1,.16
+                    padding: dp(18),dp(13)
+                    orientation: 'vertical'
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(34)
+                        Label:
+                            text: '체중'
+                            font_name: app.font_name
+                            font_size: dp(13)
+                            bold: True
+                            color: .96,.98,1,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                        Label:
+                            id: report_weight_value
+                            text: '미기록'
+                            font_name: app.font_name
+                            font_size: dp(18)
+                            bold: True
+                            color: .63,.83,1,1
+                            halign: 'right'
+                            valign: 'middle'
+                            text_size: self.size
+                    BodyTrendChart:
+                        id: report_weight_trend
+                        accent: .38,.76,1,1
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(142)
+                    radius: dp(24)
+                    background_color: .045,.067,.112,.52
+                    border_color: .95,.97,1,.16
+                    padding: dp(18),dp(13)
+                    orientation: 'vertical'
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(34)
+                        Label:
+                            text: '골격근량'
+                            font_name: app.font_name
+                            font_size: dp(13)
+                            bold: True
+                            color: .96,.98,1,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                        Label:
+                            id: report_muscle_value
+                            text: '미기록'
+                            font_name: app.font_name
+                            font_size: dp(18)
+                            bold: True
+                            color: .64,.96,.28,1
+                            halign: 'right'
+                            valign: 'middle'
+                            text_size: self.size
+                    BodyTrendChart:
+                        id: report_muscle_trend
+                        accent: .64,.96,.28,1
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(142)
+                    radius: dp(24)
+                    background_color: .045,.067,.112,.52
+                    border_color: .95,.97,1,.16
+                    padding: dp(18),dp(13)
+                    orientation: 'vertical'
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(34)
+                        Label:
+                            text: '체지방률'
+                            font_name: app.font_name
+                            font_size: dp(13)
+                            bold: True
+                            color: .96,.98,1,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                        Label:
+                            id: report_fat_value
+                            text: '미기록'
+                            font_name: app.font_name
+                            font_size: dp(18)
+                            bold: True
+                            color: .82,.49,1,1
+                            halign: 'right'
+                            valign: 'middle'
+                            text_size: self.size
+                    BodyTrendChart:
+                        id: report_fat_trend
+                        accent: .82,.49,1,1
+                RoundedCard:
+                    size_hint_y: None
+                    height: dp(142)
+                    radius: dp(24)
+                    background_color: .045,.067,.112,.42
+                    border_color: .95,.97,1,.16
+                    padding: dp(18),dp(14)
+                    orientation: 'vertical'
+                    Label:
+                        text: '식단 완료와 운동 기록을 함께 확인해요'
+                        font_name: app.font_name
+                        color: .60,.66,.77,1
+                        size_hint_y: None
+                        height: dp(22)
+                        font_size: dp(11)
+                        halign: 'left'
+                        text_size: self.size
+                    BoxLayout:
+                        spacing: dp(10)
+                        TrendBar:
+                            day: '월'
+                            level: .70
+                        TrendBar:
+                            day: '화'
+                            level: .90
+                        TrendBar:
+                            day: '수'
+                            level: .35
+                        TrendBar:
+                            day: '목'
+                            level: .78
+                            active: True
+                        TrendBar:
+                            day: '금'
+                            level: .42
+                        TrendBar:
+                            day: '토'
+                            level: .62
+                        TrendBar:
+                            day: '일'
+                            level: .84
+        TopScrollMask:
+            pos: root.x, root.top - self.height
+        AppDock:
+            size_hint: None, None
+            size: root.width - dp(40), dp(54)
+            pos: root.x + dp(20), root.y + dp(10)
+            selected: 'report'
+
+<BodyScreen>:
+    FloatLayout:
+        canvas.before:
+            Color:
+                rgba: .035,.046,.073,1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        LinearBackdrop:
+            pos: root.pos
+            size: root.size
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint: 1, None
+            pos: root.x, root.y + dp(76)
+            size: root.width, max(0, root.height - dp(76))
+            BoxLayout:
+                size_hint_y: None
+                height: dp(154)
+                padding: dp(24),dp(68),dp(24),dp(12)
+                BoxLayout:
+                    orientation: 'vertical'
+                    Label:
+                        text: '내 몸의 변화'
+                        font_name: app.font_name
+                        color: .55,.60,.70,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        valign: 'bottom'
+                        text_size: self.size
+                    Label:
+                        text: '내 정보'
+                        font_name: app.font_name
+                        font_size: dp(27)
+                        bold: True
+                        color: .98,.98,1,1
+                        halign: 'left'
+                        valign: 'top'
+                        text_size: self.size
+                BoxLayout:
+                    size_hint_x: None
+                    width: dp(156)
+                    spacing: dp(5)
+                    GlassButton:
+                        text: '프로필'
+                        size_hint_x: None
+                        size_hint_y: None
+                        width: dp(48)
+                        height: dp(38)
+                        font_size: dp(9)
+                        glass_color: .15,.34,.64,.50
+                        on_release: app.popup_profile()
+                    GlassButton:
+                        text: '동기화'
+                        size_hint_x: None
+                        size_hint_y: None
+                        width: dp(58)
+                        height: dp(38)
+                        font_size: dp(9)
+                        glass_color: .18,.42,.78,.56
+                        on_release: app.sync_health()
+                    GlassButton:
+                        text: '+'
+                        size_hint_x: None
+                        size_hint_y: None
+                        width: dp(38)
+                        height: dp(38)
+                        font_size: dp(20)
+                        bold: False
+                        glass_color: .12,.22,.40,.46
+                        color: .82,.88,1,1
+                        on_release: app.popup_body()
+            BoxLayout:
+                size_hint_y: None
+                height: dp(184)
+                padding: dp(24),dp(4),dp(24),dp(12)
+                RoundedCard:
+                    radius: dp(30)
+                    background_color: .047,.071,.118,.48
+                    border_color: .95,.97,1,.17
+                    padding: dp(20),dp(17)
+                    orientation: 'vertical'
+                    Label:
+                        text: '현재 체중'
+                        font_name: app.font_name
+                        color: .62,.70,.88,1
+                        font_size: dp(11)
+                        bold: True
+                        halign: 'left'
+                        text_size: self.size
+                    BoxLayout:
+                        Label:
+                            id: weight
+                            text: '68.4'
+                            font_name: app.font_name
+                            font_size: dp(42)
+                            bold: True
+                            color: 1,1,1,1
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            id: weight_unit
+                            text: 'kg'
+                            font_name: app.font_name
+                            font_size: dp(15)
+                            color: .60,.67,.79,1
+                            halign: 'left'
+                            valign: 'middle'
+                            text_size: self.size
+                    Label:
+                        text: '꾸준한 기록이 나만의 기준을 만들어요'
+                        font_name: app.font_name
+                        font_size: dp(11)
+                        color: .59,.66,.77,1
+                        halign: 'left'
+                        text_size: self.size
+            BoxLayout:
+                size_hint_y: None
+                height: dp(102)
+                padding: dp(24),dp(8),dp(24),dp(8)
+                spacing: dp(10)
+                RoundedCard:
+                    background_color: .045,.067,.112,.42
+                    border_color: .95,.97,1,.16
+                    padding: dp(14),dp(12)
+                    orientation: 'vertical'
+                    Label:
+                        text: '체지방률'
+                        font_name: app.font_name
+                        color: .60,.66,.77,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        text_size: self.size
+                    Label:
+                        id: fat
+                        text: '—'
+                        font_name: app.font_name
+                        color: .98,.98,1,1
+                        font_size: dp(20)
+                        bold: True
+                        halign: 'left'
+                        shorten: True
+                        text_size: self.size
+                RoundedCard:
+                    background_color: .045,.067,.112,.42
+                    border_color: .95,.97,1,.16
+                    padding: dp(14),dp(12)
+                    orientation: 'vertical'
+                    Label:
+                        text: '골격근량'
+                        font_name: app.font_name
+                        color: .60,.66,.77,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        text_size: self.size
+                    Label:
+                        id: muscle
+                        text: '—'
+                        font_name: app.font_name
+                        color: .98,.98,1,1
+                        font_size: dp(20)
+                        bold: True
+                        halign: 'left'
+                        shorten: True
+                        text_size: self.size
+            BoxLayout:
+                size_hint_y: None
+                height: dp(102)
+                padding: dp(24),dp(2),dp(24),dp(10)
+                spacing: dp(10)
+                RoundedCard:
+                    background_color: .045,.067,.112,.42
+                    border_color: .95,.97,1,.16
+                    padding: dp(14),dp(12)
+                    orientation: 'vertical'
+                    Label:
+                        text: '최근 심박수'
+                        font_name: app.font_name
+                        color: .60,.66,.77,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        text_size: self.size
+                    Label:
+                        id: heart_rate
+                        text: '—'
+                        font_name: app.font_name
+                        color: .98,.98,1,1
+                        font_size: dp(19)
+                        bold: True
+                        halign: 'left'
+                        shorten: True
+                        text_size: self.size
+                RoundedCard:
+                    background_color: .045,.067,.112,.42
+                    border_color: .95,.97,1,.16
+                    padding: dp(14),dp(12)
+                    orientation: 'vertical'
+                    Label:
+                        text: '최근 수면'
+                        font_name: app.font_name
+                        color: .60,.66,.77,1
+                        font_size: dp(10)
+                        halign: 'left'
+                        text_size: self.size
+                    Label:
+                        id: sleep_hours
+                        text: '—'
+                        font_name: app.font_name
+                        color: .98,.98,1,1
+                        font_size: dp(19)
+                        bold: True
+                        halign: 'left'
+                        shorten: True
+                        text_size: self.size
+            BoxLayout:
+                size_hint_y: None
+                height: dp(76)
+                padding: dp(24),dp(2),dp(24),dp(8)
+                RoundedCard:
+                    background_color: .040,.105,.108,.46
+                    border_color: .56,.92,.78,.24
+                    padding: dp(14),dp(10)
+                    BoxLayout:
+                        orientation: 'vertical'
+                        Label:
+                            text: '내 식당'
+                            font_name: app.font_name
+                            font_size: dp(11)
+                            bold: True
+                            color: .66,.96,.83,1
+                            halign: 'left'
+                            text_size: self.size
+                        Label:
+                            id: cafeteria_summary
+                            text: '설정한 식당이 없어요'
+                            font_name: app.font_name
+                            font_size: dp(10)
+                            color: .66,.76,.78,1
+                            halign: 'left'
+                            shorten: True
+                            text_size: self.size
+                    GlassButton:
+                        text: '식당 설정'
+                        size_hint_x: None
+                        width: dp(74)
+                        font_size: dp(9)
+                        glass_color: .08,.34,.27,.54
+                        color: .72,1,.86,1
+                        on_release: app.popup_cafeterias()
+            Label:
+                text: '건강 기록 히스토리'
+                font_name: app.font_name
+                size_hint_y: None
+                height: dp(42)
+                padding_x: dp(24)
+                font_size: dp(18)
+                bold: True
+                color: .98,.98,1,1
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+            ScrollView:
+                id: body_scroll
+                do_scroll_x: False
+                bar_width: 0
+                effect_cls: ScrollEffect
+                scroll_distance: dp(6)
+                scroll_timeout: 60
+                BoxLayout:
+                    id: body_box
+                    orientation: 'vertical'
+                    spacing: dp(9)
+                    padding: dp(24),dp(0),dp(24),dp(20)
+                    size_hint_x: None
+                    width: root.width
+                    size_hint_y: None
+                    height: self.minimum_height
+            Label:
+                id: version_label
+                text: ''
+                font_name: app.font_name
+                font_size: dp(10)
+                color: .45,.52,.64,1
+                size_hint_y: None
+                height: dp(24)
+                halign: 'center'
+        TopScrollMask:
+            pos: root.x, root.top - self.height
+        AppDock:
+            size_hint: None, None
+            size: root.width - dp(40), dp(54)
+            pos: root.x + dp(20), root.y + dp(10)
+            selected: 'body'
+
+ScreenManager:
+    transition: NoTransition()
+    HomeScreen:
+        name: 'home'
+    MealsScreen:
+        name: 'meals'
+    WorkoutScreen:
+        name: 'workouts'
+    ReportScreen:
+        name: 'report'
+    BodyScreen:
+        name: 'body'

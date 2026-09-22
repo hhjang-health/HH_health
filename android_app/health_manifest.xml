@@ -1,0 +1,4 @@
+<!-- Makes the pre-Android-14 Health Connect provider visible to the app. -->
+<queries>
+    <package android:name="com.google.android.apps.healthdata" />
+</queries>

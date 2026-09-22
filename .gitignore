@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+welltable.db
+android_app/welltable_mobile.db
+android_app/*_preview*.png
+android_app/*_final*.png
+android_app/*_check*.png
+android_app/bin/
+android_app/.buildozer/
+android_app/.gradle/
+*.apk
+*.idsig
+.DS_Store

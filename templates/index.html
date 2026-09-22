@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f9f3"><title>Welltable · 나를 위한 건강 루틴</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="page active" id="home-page">
+      <header class="topbar"><div><p class="eyebrow" id="today-label">TODAY</p><h1>좋은 아침이에요 <span>현</span></h1></div><button class="avatar" aria-label="내 프로필">ㅎ</button></header>
+      <div class="streak-card"><div><p>나의 건강 루틴</p><h2><strong>4</strong>일째 이어가고 있어요 <i>✦</i></h2></div><div class="streak-ring"><b>4</b><small>DAYS</small></div></div>
+      <section class="section-head"><div><p class="eyebrow">TODAY'S MENU</p><h2>오늘의 식단</h2></div><button class="soft-button" onclick="makeNewPlan()">↻ 새로 추천</button></section>
+      <div id="meal-plan" class="meal-list"></div>
+      <div class="daily-summary" id="daily-summary"></div>
+      <section class="section-head compact"><div><p class="eyebrow">ACTIVITY</p><h2>오늘의 활동</h2></div><button class="text-button" onclick="goTo('workout-page')">기록하기 <span>→</span></button></section>
+      <div class="activity-card" id="activity-card"></div>
+    </section>
+
+    <section class="page" id="sets-page">
+      <header class="inner-header"><button class="back" onclick="goTo('home-page')">‹</button><div><p class="eyebrow">MEAL LIBRARY</p><h1>나의 식단 세트</h1></div><button class="round-add" onclick="openSetModal()">+</button></header>
+      <p class="helper">저장한 세트에서 매일 랜덤 식단을 만들어요.</p>
+      <div class="filter-tabs" id="set-filters"><button class="selected" data-type="all">전체</button><button data-type="breakfast">아침</button><button data-type="lunch">점심</button><button data-type="dinner">저녁</button></div>
+      <div id="set-list" class="set-list"></div>
+      <button class="wide-outline" onclick="openSetModal()">+ 새 식단 세트 만들기</button>
+    </section>
+
+    <section class="page" id="workout-page">
+      <header class="inner-header"><button class="back" onclick="goTo('home-page')">‹</button><div><p class="eyebrow">MOVE & FEEL</p><h1>운동 기록</h1></div><button class="round-add" onclick="openWorkoutModal()">+</button></header>
+      <div class="sync-card"><div class="sync-icon">⌁</div><div><b>Samsung Health</b><p>Health Connect와 연결해 활동을 가져와요</p></div><button onclick="syncHealth()">동기화</button></div>
+      <section class="week-movement"><div><p class="eyebrow">THIS WEEK</p><h2 id="weekly-minutes">0분 <span>움직였어요</span></h2></div><div class="mini-bars" id="workout-bars"></div></section>
+      <section class="section-head compact"><h2>최근 활동</h2><button class="text-button" onclick="openWorkoutModal()">+ 직접 입력</button></section>
+      <div class="workout-list" id="workout-list"></div>
+    </section>
+
+    <section class="page" id="stats-page">
+      <header class="inner-header simple"><div><p class="eyebrow">YOUR PATTERN</p><h1>건강 리포트</h1></div><button class="period">이번 주⌄</button></header>
+      <div class="stats-hero"><p>이번 주 건강 점수</p><div><b id="health-score">0</b><span>/ 100</span></div><small>지난주보다 <em>12% 좋아요</em></small><div class="score-line"><i></i></div></div>
+      <div class="metric-grid"><article><span class="metric-icon mint">↗</span><p>운동 시간</p><b id="stat-minutes">0분</b><small>목표의 72%</small></article><article><span class="metric-icon peach">♨</span><p>소모 칼로리</p><b id="stat-calories">0 kcal</b><small>전주보다 +8%</small></article></div>
+      <section class="section-head compact"><div><h2>주간 기록</h2><p class="subtle">식단 완료 · 운동 시간</p></div></section>
+      <div class="calendar-card" id="calendar"></div>
+      <section class="section-head compact"><h2>신체 변화</h2><button class="text-button" onclick="goTo('body-page')">자세히 <span>→</span></button></section>
+      <div class="chart-card"><div class="chart-head"><div><b id="latest-weight">- kg</b><p>현재 체중</p></div><span class="weight-change">↓ 0.6 kg</span></div><div class="line-chart" id="weight-chart"></div></div>
+    </section>
+
+    <section class="page" id="body-page">
+      <header class="inner-header"><button class="back" onclick="goTo('stats-page')">‹</button><div><p class="eyebrow">BODY CHECK</p><h1>나의 신체 정보</h1></div><button class="round-add" onclick="openBodyModal()">+</button></header>
+      <div class="body-main"><p>최근 기록</p><div><strong id="body-weight">-</strong><span>kg</span></div><small id="body-date">아직 기록이 없어요</small></div>
+      <div class="body-metrics" id="body-metrics"></div>
+      <div class="insight"><span>✦</span><div><b>작은 변화도 충분히 의미 있어요</b><p>일주일에 1~2회, 같은 시간대에 기록하면 더 정확한 흐름을 볼 수 있어요.</p></div></div>
+      <section class="section-head compact"><h2>기록 히스토리</h2><button class="text-button" onclick="openBodyModal()">+ 기록</button></section><div id="body-list"></div>
+    </section>
+
+    <nav class="bottom-nav"><button class="nav-item active" data-page="home-page"><span>⌂</span>홈</button><button class="nav-item" data-page="sets-page"><span>▤</span>식단</button><button class="nav-item" data-page="workout-page"><span>♧</span>운동</button><button class="nav-item" data-page="stats-page"><span>◔</span>리포트</button></nav>
+  </main>
+
+  <div class="modal-layer" id="modal-layer" onclick="closeModal(event)"><div class="sheet" id="sheet"></div></div>
+  <div class="toast" id="toast"></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

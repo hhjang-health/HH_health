@@ -1,0 +1,1 @@
+# Android dependencies are declared in buildozer.spec.
