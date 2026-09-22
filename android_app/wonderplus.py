@@ -92,7 +92,10 @@ def parse_menu(payload, menu_date, detail_lookup=None):
             # The weekly list exposes only calories.  The site deliberately
             # exposes the remaining values from its green “…” detail action;
             # use that same public response rather than estimating macros.
-            if detail_lookup and len(row) > 13 and row[11] and row[13]:
+            # Take Out 1/2 contain many independently selectable products.
+            # Their counter-level detail request is both slow and unsuitable
+            # as per-product nutrition, so fetch it only after selection.
+            if detail_lookup and not takeout and len(row) > 13 and row[11] and row[13]:
                 try:
                     nutrition.update(detail_lookup(str(row[11]), str(row[13])))
                 # A single counter can legitimately have no published detail

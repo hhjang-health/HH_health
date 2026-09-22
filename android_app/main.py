@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.4'
+APP_VERSION = '2.1.5'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -525,6 +525,14 @@ class Store:
                                        WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
             self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_group_refresh_214')")
             self.conn.commit()
+        # Takeout names must be available immediately. Clear only these
+        # provider caches once so an older eager response cannot persist.
+        if not self.conn.execute("SELECT 1 FROM app_migrations WHERE name='takeout_lazy_nutrition_refresh_215'").fetchone():
+            self.conn.execute("""DELETE FROM cafeteria_menus
+                WHERE cafeteria_id IN (SELECT id FROM cafeterias
+                                       WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
+            self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_lazy_nutrition_refresh_215')")
+            self.conn.commit()
         self.conn.executemany("INSERT OR IGNORE INTO foods(name,category,calories,protein,carbs,fat,serving) VALUES(?,?,?,?,?,?,?)", FOODS)
         # Meal sets are personal presets. Foods are seeded as a library, while
         # plans and health records are always created from the user's own data.
@@ -835,6 +843,28 @@ class Store:
         # (False). Omitting this return made every first selection look like
         # a completed, locked meal for both Hwaseong and Dongtan.
         return True
+
+    def update_takeout_choice_nutrition(self, meal_type, title, nutrition):
+        """Fill only missing values after a chosen item is resolved."""
+        today = date.today().isoformat()
+        row = self.conn.execute('''SELECT calories, protein, carbs
+                                   FROM cafeteria_takeout_selections
+                                   WHERE meal_date=? AND meal_type=? AND title=?''',
+                                (today, meal_type, title)).fetchone()
+        if not row:
+            return False
+        values = {key: nutrition[key] for key in ('calories', 'protein', 'carbs')
+                  if row[key] is None and nutrition.get(key) is not None}
+        if not values:
+            return False
+        self.conn.execute('''UPDATE cafeteria_takeout_selections
+                             SET calories=COALESCE(?, calories),
+                                 protein=COALESCE(?, protein),
+                                 carbs=COALESCE(?, carbs)
+                             WHERE meal_date=? AND meal_type=? AND title=?''',
+                          (values.get('calories'), values.get('protein'), values.get('carbs'),
+                           today, meal_type, title))
+        self._sync_takeout_summary(meal_type)
         return True
 
     def select_manual_meal(self, meal_type, food_ids):
@@ -2114,7 +2144,7 @@ class WelltableApp(App):
                                      color=(.84,1,.93,1) if selected else (.86,.91,.96,1), shorten=False)
                 item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
                 def toggle(_button, meal_key=self.selected_cafeteria_meal, title=takeout_title,
-                           nutrients=dict(choice.get('nutrition') or {})):
+                           nutrients=dict(choice.get('nutrition') or {}), menu_name=menu_raw):
                     result = self.store.toggle_takeout_choice(meal_key, title, nutrients)
                     if result is None:
                         self._health_notice('완료된 식단이에요', '오늘의 식단 블록을 다시 눌러 완료를 해제한 뒤 변경할 수 있어요.')
@@ -2122,6 +2152,17 @@ class WelltableApp(App):
                     self._takeout_flash = (meal_key, title) if result else None
                     holder['popup'].dismiss()
                     self.refresh_home()
+                    if result and not all(nutrients.get(key) is not None for key in ('calories', 'protein', 'carbs')):
+                        def enrich_selected(name=menu_name, selected_meal=meal_key, selected_title=title):
+                            try:
+                                fallback, _note = self._takeout_fallback_nutrition(name)
+                                if fallback:
+                                    Clock.schedule_once(
+                                        lambda _dt, mk=selected_meal, st=selected_title, values=dict(fallback):
+                                        self._apply_takeout_nutrition(mk, st, values), 0)
+                            except Exception:
+                                Logger.exception('Takeout nutrition lookup failed')
+                        Thread(target=enrich_selected, daemon=True).start()
                     Clock.schedule_once(lambda _dt: self.popup_takeout_choices(restaurant, groups), .05)
                 item_button.bind(on_release=toggle)
                 row.add_widget(item_button)
@@ -2156,6 +2197,10 @@ class WelltableApp(App):
         popup = Popup(content=box, title='', size_hint=(.94, .80), background='', background_color=(0,0,0,0))
         holder['popup'] = popup
         popup.open()
+
+    def _apply_takeout_nutrition(self, meal_type, title, nutrients):
+        if self.store.update_takeout_choice_nutrition(meal_type, title, nutrients):
+            self.refresh_home()
 
     def line_item(self,title,tag,detail,tail):
         return ListLine(title=title, tag=tag, detail=detail, tail=tail)
@@ -2381,8 +2426,8 @@ class WelltableApp(App):
         def worker():
             try:
                 meals = fetch_wonderplus_menus(self._fetch_public_text, restaurant['name'])
-                # Dongtan's Take Out 1/2 are public counters just like K1–K4.
-                meals = self._enrich_takeout_fallbacks(meals)
+                # Take Out names render immediately; missing nutrition is
+                # resolved only for an item the user actually chooses.
                 Clock.schedule_once(lambda _dt: finish(meals=meals), 0)
             except Exception as exc:
                 Logger.exception('WonderPlus public menu sync failed')
@@ -2442,10 +2487,10 @@ class WelltableApp(App):
                         # one combined menu title).
                         child_names = [part.strip() for part in re.split(r'\s+', child_name) if part.strip()] \
                                       if re.fullmatch(r'MAIN\s*[12]', corner, re.I) else [child_name]
+                        # A MAIN group is a bundle. Its group/detail calories
+                        # do not describe each product, so resolve a selected
+                        # child later instead of delaying menu rendering.
                         child_nutrition = {}
-                        kcal = child.get('kcal')
-                        if len(child_names) == 1 and isinstance(kcal, (int, float)) and kcal > 0:
-                            child_nutrition['calories'] = float(kcal)
                         for part in child_names:
                             if part not in [existing['menu'] for existing in children]:
                                 children.append({'menu': part, 'nutrition': dict(child_nutrition)})
@@ -2622,8 +2667,18 @@ class WelltableApp(App):
                 payload = self._fetch_public_json(url)
                 if payload.get('retCode') != '00':
                     raise RuntimeError(str(payload.get('retMsg') or '메뉴가 제공되지 않아요.'))
-                for options in (payload.get('data') or {}).values():
+                for feed_key, options in (payload.get('data') or {}).items():
                     for item in options:
+                        # MAIN1/MAIN2 need their public detail response only
+                        # to obtain their individual product names.  Fetching
+                        # every counter's full detail serially made the Home
+                        # menu wait far too long.  Nutrition itself remains
+                        # lazy for takeout children.
+                        is_takeout_group = (str(feed_key) == '8' and
+                                            bool(re.fullmatch(r'MAIN\s*[12]', str(item.get('corner') or ''), re.I)))
+                        if not is_takeout_group:
+                            item['_nutrition'] = {}
+                            continue
                         try:
                             detail = self._fetch_public_json('https://front.cjfreshmeal.co.kr/meal/v1/meal-detail?mealIdx=' + str(int(item['mealIdx'])))
                             if detail.get('retCode') != '00': raise ValueError('상세 조회 실패')
@@ -2631,7 +2686,7 @@ class WelltableApp(App):
                             if str(data.get('mealIdx')) != str(item['mealIdx']): raise ValueError('메뉴 불일치')
                             if data.get('mealDt','').replace('-','') != item.get('mealDt'):
                                 raise ValueError('메뉴 날짜 불일치')
-                            item['_nutrition'] = fresh_detail(data)
+                            item['_nutrition'] = {}
                             # ``mealList`` separates the selectable dishes
                             # inside a SnackPick MAIN group.
                             item['_items'] = list(data.get('mealList') or [])
@@ -2639,7 +2694,6 @@ class WelltableApp(App):
                             item['_nutrition'] = {}
                             item['_nutrition_note'] = '상세 영양정보를 불러오지 못했어요. 새로고침해 주세요.'
                 meals = self._freshmeal_menu_text(payload)
-                meals = self._enrich_takeout_fallbacks(meals)
                 # CJ FreshMeal can have no feed on a given date.  Save that
                 # empty state and render it inline instead of interrupting.
                 Clock.schedule_once(lambda _dt, cafe_id=restaurant['id'], fetched=meals:
