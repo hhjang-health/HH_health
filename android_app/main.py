@@ -17,6 +17,7 @@ import urllib.request
 import webbrowser
 from difflib import SequenceMatcher
 from datetime import date, datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 from wonderplus import fetch_menus as fetch_wonderplus_menus, search_sites as search_wonderplus_sites
 from menu_nutrition import fresh_detail, welstory_html, enrich_welstory
@@ -52,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.7'
+APP_VERSION = '2.1.8'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -2673,32 +2674,49 @@ class WelltableApp(App):
                 payload = self._fetch_public_json(url)
                 if payload.get('retCode') != '00':
                     raise RuntimeError(str(payload.get('retMsg') or '메뉴가 제공되지 않아요.'))
+                detail_targets = []
                 for feed_key, options in (payload.get('data') or {}).items():
-                    for item in options:
-                        # MAIN1/MAIN2 need their public detail response only
-                        # to obtain their individual product names.  Fetching
-                        # every counter's full detail serially made the Home
-                        # menu wait far too long.  Nutrition itself remains
-                        # lazy for takeout children.
+                    for item in options or []:
+                        # SnackPick MAIN1/MAIN2 are takeout bundles. They
+                        # need only their individual product names now;
+                        # nutrition remains lazy until a product is selected.
                         is_takeout_group = (str(feed_key) == '8' and
                                             bool(re.fullmatch(r'MAIN\s*[12]', str(item.get('corner') or ''), re.I)))
-                        if not is_takeout_group:
-                            item['_nutrition'] = {}
-                            continue
-                        try:
-                            detail = self._fetch_public_json('https://front.cjfreshmeal.co.kr/meal/v1/meal-detail?mealIdx=' + str(int(item['mealIdx'])))
-                            if detail.get('retCode') != '00': raise ValueError('상세 조회 실패')
-                            data = detail['data']
-                            if str(data.get('mealIdx')) != str(item['mealIdx']): raise ValueError('메뉴 불일치')
-                            if data.get('mealDt','').replace('-','') != item.get('mealDt'):
-                                raise ValueError('메뉴 날짜 불일치')
-                            item['_nutrition'] = {}
-                            # ``mealList`` separates the selectable dishes
-                            # inside a SnackPick MAIN group.
-                            item['_items'] = list(data.get('mealList') or [])
-                        except Exception:
-                            item['_nutrition'] = {}
-                            item['_nutrition_note'] = '상세 영양정보를 불러오지 못했어요. 새로고침해 주세요.'
+                        detail_targets.append((item, is_takeout_group))
+
+                def fetch_detail(target):
+                    item, is_takeout_group = target
+                    try:
+                        detail = self._fetch_public_json(
+                            'https://front.cjfreshmeal.co.kr/meal/v1/meal-detail?mealIdx=' + str(int(item['mealIdx'])))
+                        if detail.get('retCode') != '00':
+                            raise ValueError('상세 조회 실패')
+                        data = detail.get('data') or {}
+                        if str(data.get('mealIdx')) != str(item['mealIdx']):
+                            raise ValueError('메뉴 불일치')
+                        if data.get('mealDt', '').replace('-', '') != item.get('mealDt'):
+                            raise ValueError('메뉴 날짜 불일치')
+                        # A regular FreshMeal counter is a main menu.  Its
+                        # disclosed detail nutrients are loaded before Home is
+                        # drawn; only SnackPick takeout children stay lazy.
+                        nutrients = {} if is_takeout_group else {
+                            key: value for key, value in fresh_detail(data).items() if value is not None
+                        }
+                        children = list(data.get('mealList') or []) if is_takeout_group else []
+                        return item, nutrients, children, ''
+                    except Exception:
+                        return item, {}, [], '상세 영양정보를 불러오지 못했어요. 새로고침해 주세요.'
+
+                # These independent public requests used to run serially.
+                # Parallel loading keeps the full main-menu nutrition data
+                # available on first render without holding the menu screen.
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    for item, nutrients, children, note in pool.map(fetch_detail, detail_targets):
+                        item['_nutrition'] = nutrients
+                        if children:
+                            item['_items'] = children
+                        if note:
+                            item['_nutrition_note'] = note
                 meals = self._freshmeal_menu_text(payload)
                 # CJ FreshMeal can have no feed on a given date.  Save that
                 # empty state and render it inline instead of interrupting.
