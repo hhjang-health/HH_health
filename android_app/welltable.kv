@@ -482,28 +482,42 @@
                         valign: 'bottom'
                         text_size: self.size
                     BoxLayout:
-                        orientation: 'vertical'
                         size_hint_y: None
                         height: dp(72)
-                        Label:
-                            id: greeting_name
+                        spacing: dp(8)
+                        BoxLayout:
+                            orientation: 'vertical'
+                            Label:
+                                id: greeting_name
+                                font_name: app.font_name
+                                text: '회원님,'
+                                bold: True
+                                font_size: min(dp(25), self.width / max(1, len(self.text)))
+                                color: .97,.98,1,1
+                                halign: 'left'
+                                text_size: self.size
+                            Label:
+                                id: greeting_label
+                                text: '회원님, 오늘도 나를 위한 선택을 해볼까요?'
+                                font_name: app.font_name
+                                color: .68,.76,.87,1
+                                font_size: min(dp(14), max(dp(10), self.width * 1.8 / max(1, len(self.text))))
+                                halign: 'left'
+                                valign: 'middle'
+                                max_lines: 2
+                                text_size: self.size
+                        GlassButton:
+                            id: update_button
+                            text: '업데이트'
                             font_name: app.font_name
-                            text: '회원님,'
-                            bold: True
-                            font_size: min(dp(25), self.width / max(1, len(self.text)))
-                            color: .97,.98,1,1
-                            halign: 'left'
-                            text_size: self.size
-                        Label:
-                            id: greeting_label
-                            text: '회원님, 오늘도 나를 위한 선택을 해볼까요?'
-                            font_name: app.font_name
-                            color: .68,.76,.87,1
-                            font_size: min(dp(14), max(dp(10), self.width * 1.8 / max(1, len(self.text))))
-                            halign: 'left'
-                            valign: 'middle'
-                            max_lines: 2
-                            text_size: self.size
+                            font_size: dp(12)
+                            size_hint: None, None
+                            size: dp(114), dp(44)
+                            glass_color: .92,.31,.08,.30
+                            color: 1,.91,.82,1
+                            opacity: 1 if app.update_available else 0
+                            disabled: not app.update_available
+                            on_release: app.popup_update()
                 RoundedCard:
                     size_hint_y: None
                     height: dp(154)
@@ -721,21 +735,6 @@
                         halign: 'right'
                         valign: 'middle'
                         text_size: self.size
-        GlassButton:
-            id: update_button
-            text: '업데이트'
-            font_name: app.font_name
-            font_size: dp(12)
-            size_hint: None, None
-            size: dp(114), dp(44)
-            # Place the release action beside the member greeting instead of
-            # the status-bar edge, where it was too easy to miss.
-            pos: root.right - dp(138), root.top - dp(153)
-            glass_color: .92,.31,.08,.30
-            color: 1,.91,.82,1
-            opacity: 1 if app.update_available else 0
-            disabled: not app.update_available
-            on_release: app.popup_update()
         TopScrollMask:
             pos: root.x, root.top - self.height
         AppDock:

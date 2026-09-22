@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.1'
+APP_VERSION = '2.1.0'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1461,45 +1461,33 @@ class WelltableApp(App):
         later.bind(on_release=lambda _button: popup.dismiss())
         def begin(_button):
             popup.dismiss()
-            if not self._enqueue_apk_download():
-                self._health_notice('업데이트를 시작하지 못했어요', '저장공간과 네트워크 연결을 확인한 뒤 다시 시도해 주세요.')
+            if not self._open_update_download_page():
+                self._health_notice('업데이트 페이지를 열지 못했어요', '기기의 브라우저 또는 네트워크 연결을 확인한 뒤 다시 시도해 주세요.')
         install.bind(on_release=begin)
         popup.open()
 
-    def _enqueue_apk_download(self):
-        """Download an approved release straight into Android Downloads.
+    def _open_update_download_page(self):
+        """Open the signed APK release in the installed browser.
 
-        This intentionally uses Android's DownloadManager rather than a
-        browser intent, so tapping 업데이트 never opens GitHub first. Android
-        still owns the later package-installer confirmation, as it must.
+        DownloadManager differs across Samsung firmware. The browser path is
+        the established flow: GitHub downloads the APK, then Android presents
+        its normal package-installer confirmation.
         """
         try:
             from jnius import autoclass
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            Context = autoclass('android.content.Context')
+            Intent = autoclass('android.content.Intent')
             Uri = autoclass('android.net.Uri')
-            DownloadManager = autoclass('android.app.DownloadManager')
-            Request = autoclass('android.app.DownloadManager$Request')
-            Environment = autoclass('android.os.Environment')
             activity = PythonActivity.mActivity
-            request = Request(Uri.parse(self._update_apk_url))
-            request.setTitle(f'살빼자 v{self.update_version}')
-            request.setDescription('최신 APK를 다운로드하고 있어요.')
-            request.setMimeType('application/vnd.android.package-archive')
-            # Request is a separately loaded nested Java class. Accessing it
-            # through DownloadManager works in Java syntax but raises an
-            # AttributeError through PyJNIus before the download is enqueued.
-            request.setNotificationVisibility(Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
-                                                       f'살빼자_{self.update_version}.apk')
-            download_id = activity.getSystemService(Context.DOWNLOAD_SERVICE).enqueue(request)
-            if int(download_id) <= 0:
-                raise RuntimeError('DownloadManager enqueue failed')
-            self._health_notice('다운로드를 시작했어요', '완료 알림을 누르면 최신 버전을 설치할 수 있어요.')
+            intent = Intent(Intent.ACTION_VIEW, Uri.parse(self._update_apk_url))
+            activity.startActivity(intent)
             return True
         except Exception:
-            Logger.exception('APK DownloadManager request failed')
-            return False
+            try:
+                return bool(webbrowser.open(self._update_apk_url))
+            except Exception:
+                Logger.exception('Update browser intent failed')
+                return False
 
     def configure_system_bars(self):
         """Native activity owns the system bars after its SDL surface exists."""
