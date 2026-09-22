@@ -54,8 +54,9 @@ def parse_menu(payload, menu_date, detail_lookup=None):
         if not key or not (kitchen or takeout):
             continue
         title = ('K' + kitchen[1]) if kitchen else ('Take Out' + (takeout[1] or ''))
-        parts = [html.unescape(re.sub(r'<[^>]+>', ' ', str(value))).strip()
-                 for value in (row[3], row[5]) if value]
+        raw_parts = [html.unescape(re.sub(r'<[^>]+>', ' ', str(value))).strip()
+                     for value in (row[3], row[5]) if value]
+        parts = raw_parts
         menu = re.sub(r'\s+', ' ', ' · '.join(parts)).strip()
         if menu:
             # The weekly endpoint always exposes kcal at index 4.  Some
@@ -100,7 +101,24 @@ def parse_menu(payload, menu_date, detail_lookup=None):
                 except Exception:
                     pass
             nutrition = {name: value for name, value in nutrition.items() if value is not None}
+            # Keep the public fields as individually selectable foods as well
+            # as the compact group summary.  ``row[3]`` is the main item and
+            # ``row[5]`` is the published side/item list; flattening them here
+            # made a whole Take Out counter behave as one inseparable choice.
+            item_names = []
+            for part in raw_parts:
+                for value in re.split(r'\s*(?:,|·|/|\\n)\s*', part):
+                    value = re.sub(r'\s+', ' ', value).strip()
+                    if value and value not in item_names:
+                        item_names.append(value)
+            # Counter-level nutrients describe the complete published tray,
+            # not each child.  Reusing them per child would multiply calories
+            # when a user selects two items, so only a one-item counter keeps
+            # that exact value; multi-item choices are enriched per food.
+            item_nutrition = dict(nutrition) if len(item_names) == 1 else {}
+            items = [{'menu': value, 'nutrition': dict(item_nutrition)} for value in item_names]
             groups[key].setdefault(title, []).append({'menu':menu, 'nutrition':nutrition,
+                'items': items,
                 'source_note':'원더풀 플러스 공식 메뉴 영양정보 · 공개 응답에 없는 영양소는 미제공으로 표시합니다.'})
     return {key: json.dumps([{'title': title, **item}
                             for title, items in sorted(corners.items()) for item in items], ensure_ascii=False)

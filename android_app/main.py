@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.2'
+APP_VERSION = '2.1.3'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -507,6 +507,14 @@ class Store:
                 WHERE cafeteria_id IN (SELECT id FROM cafeterias
                                        WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
             self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_provider_refresh_212')")
+            self.conn.commit()
+        # Take Out / MAIN groups now retain their published child dishes, so
+        # refresh only these two providers once.  Personal choices are kept.
+        if not self.conn.execute("SELECT 1 FROM app_migrations WHERE name='takeout_item_refresh_213'").fetchone():
+            self.conn.execute("""DELETE FROM cafeteria_menus
+                WHERE cafeteria_id IN (SELECT id FROM cafeterias
+                                       WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
+            self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_item_refresh_213')")
             self.conn.commit()
         self.conn.executemany("INSERT OR IGNORE INTO foods(name,category,calories,protein,carbs,fat,serving) VALUES(?,?,?,?,?,?,?)", FOODS)
         # Meal sets are personal presets. Foods are seeded as a library, while
@@ -2072,42 +2080,51 @@ class WelltableApp(App):
         selected_takeouts = {row['title'] for row in self.store.takeout_choices(self.selected_cafeteria_meal)}
 
         for group in groups:
-            menu_raw = str(group.get('menu') or '')
-            menu_text = re.sub(r'\s*(?: · |,)\s*', '\n', menu_raw)
             group_title = str(group.get('title') or '')
-            takeout_title = menu_raw if group_title in ('', '오늘의 메뉴') else f'{group_title} · {menu_raw}'
-            selected = takeout_title in selected_takeouts
-            line_count = max(1, len(menu_text.splitlines()))
-            row = RoundedCard(orientation='horizontal', size_hint_y=None,
-                              height=dp(max(58, 19 * line_count + 18)), radius=dp(12),
-                              padding=(dp(10), dp(4)), spacing=dp(6),
-                              surface_color=[.05,.58,.50,1] if selected else [.065,.09,.145,1],
-                              surface_opacity=.96 if selected else .58,
-                              background_color=[1,1,1,.90] if selected else [0,0,0,0],
-                              border_color=[0,0,0,0], rim_strength=0)
-            item_button = Button(text=(menu_text if group_title in ('', '오늘의 메뉴') else f'{group_title}\n{menu_text}'), font_name=self.font_name, font_size=dp(11),
-                                 halign='left', valign='middle', background_normal='', background_color=(0,0,0,0),
-                                 color=(.84,1,.93,1) if selected else (.86,.91,.96,1), shorten=False)
-            item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
-            def toggle(_button, meal_key=self.selected_cafeteria_meal, title=takeout_title,
-                       nutrients=group.get('nutrition', {}), source_group=dict(group)):
-                result = self.store.toggle_takeout_choice(meal_key, title, nutrients)
-                if result is None:
-                    self._health_notice('완료된 식단이에요', '오늘의 식단 블록을 다시 눌러 완료를 해제한 뒤 변경할 수 있어요.')
-                    return
-                self._takeout_flash = (meal_key, title) if result else None
-                holder['popup'].dismiss()
-                self.refresh_home()
-                Clock.schedule_once(lambda _dt: self.popup_takeout_choices(restaurant, groups), .05)
-            item_button.bind(on_release=toggle)
-            row.add_widget(item_button)
-            detail = GlassButton(text='···', font_name=self.font_name, size_hint=(None, None),
-                                 size=(dp(38), dp(32)), pos_hint={'center_y': .5}, font_size=dp(13),
-                                 glass_color=(.05,.58,.50,.88) if selected else (.11,.16,.25,.86),
-                                 color=(.88,1,.95,1) if selected else (.78,.87,1,1))
-            detail.bind(on_release=lambda _button, item=dict(group): self.popup_cafeteria_detail(item))
-            row.add_widget(detail)
-            list_box.add_widget(row)
+            # New FreshMeal/WonderPlus data preserves ``items``.  Older cache
+            # rows degrade cleanly to their former one-row behaviour.
+            choices = group.get('items')
+            if not isinstance(choices, list) or not choices:
+                choices = [{'menu': str(group.get('menu') or ''), 'nutrition': dict(group.get('nutrition') or {})}]
+            for choice in choices:
+                menu_raw = str(choice.get('menu') or '').strip()
+                if not menu_raw:
+                    continue
+                menu_text = re.sub(r'\s*(?: · |,)\s*', '\n', menu_raw)
+                takeout_title = menu_raw if group_title in ('', '오늘의 메뉴') else f'{group_title} · {menu_raw}'
+                selected = takeout_title in selected_takeouts
+                line_count = max(1, len(menu_text.splitlines()))
+                row = RoundedCard(orientation='horizontal', size_hint_y=None,
+                                  height=dp(max(58, 19 * (line_count + (0 if group_title in ('', '오늘의 메뉴') else 1)) + 18)), radius=dp(12),
+                                  padding=(dp(10), dp(4)), spacing=dp(6),
+                                  surface_color=[.05,.58,.50,1] if selected else [.065,.09,.145,1],
+                                  surface_opacity=.96 if selected else .58,
+                                  background_color=[1,1,1,.90] if selected else [0,0,0,0],
+                                  border_color=[0,0,0,0], rim_strength=0)
+                item_button = Button(text=(menu_text if group_title in ('', '오늘의 메뉴') else f'{group_title}\n{menu_text}'), font_name=self.font_name, font_size=dp(11),
+                                     halign='left', valign='middle', background_normal='', background_color=(0,0,0,0),
+                                     color=(.84,1,.93,1) if selected else (.86,.91,.96,1), shorten=False)
+                item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
+                def toggle(_button, meal_key=self.selected_cafeteria_meal, title=takeout_title,
+                           nutrients=dict(choice.get('nutrition') or {})):
+                    result = self.store.toggle_takeout_choice(meal_key, title, nutrients)
+                    if result is None:
+                        self._health_notice('완료된 식단이에요', '오늘의 식단 블록을 다시 눌러 완료를 해제한 뒤 변경할 수 있어요.')
+                        return
+                    self._takeout_flash = (meal_key, title) if result else None
+                    holder['popup'].dismiss()
+                    self.refresh_home()
+                    Clock.schedule_once(lambda _dt: self.popup_takeout_choices(restaurant, groups), .05)
+                item_button.bind(on_release=toggle)
+                row.add_widget(item_button)
+                detail_item = {**dict(group), 'menu': menu_raw, 'nutrition': dict(choice.get('nutrition') or {})}
+                detail = GlassButton(text='···', font_name=self.font_name, size_hint=(None, None),
+                                     size=(dp(38), dp(32)), pos_hint={'center_y': .5}, font_size=dp(13),
+                                     glass_color=(.05,.58,.50,.88) if selected else (.11,.16,.25,.86),
+                                     color=(.88,1,.95,1) if selected else (.78,.87,1,1))
+                detail.bind(on_release=lambda _button, item=detail_item: self.popup_cafeteria_detail(item))
+                row.add_widget(detail)
+                list_box.add_widget(row)
         scroll.add_widget(list_box)
         box.add_widget(scroll)
         popup = Popup(content=box, title='', size_hint=(.94, .80), background='', background_color=(0,0,0,0))
@@ -2371,8 +2388,27 @@ class WelltableApp(App):
                 side = str(item.get('side') or '').strip()
                 menu = ' · '.join(part for part in (name, side) if part)
                 if menu:
+                    # FreshMeal's public detail endpoint exposes ``mealList``
+                    # for SnackPick MAIN1/MAIN2.  It is the authoritative
+                    # child-menu list; retain it instead of treating an entire
+                    # MAIN group as one food choice.
+                    children = []
+                    for child in item.get('_items') or []:
+                        child_name = str(child.get('name') or '').strip()
+                        if not child_name or child.get('mainDish'):
+                            continue
+                        child_nutrition = {}
+                        kcal = child.get('kcal')
+                        if isinstance(kcal, (int, float)) and kcal > 0:
+                            child_nutrition['calories'] = float(kcal)
+                        children.append({'menu': child_name, 'nutrition': child_nutrition})
+                    # The feed normally has details, but do not make an empty
+                    # popup if its detail endpoint is temporarily unavailable.
+                    if not children:
+                        children = [{'menu': menu, 'nutrition': dict(item.get('_nutrition') or {})}]
                     groups.append({'title': corner or '오늘의 메뉴', 'menu': menu,
-                                   'nutrition': item.get('_nutrition', {}), 'source_id': item.get('mealIdx'),
+                                   'nutrition': item.get('_nutrition', {}), 'items': children,
+                                   'source_id': item.get('mealIdx'),
                                    'source_note': item.get('_nutrition_note', '프레시밀 공식 상세정보')})
             return groups
 
@@ -2429,21 +2465,32 @@ class WelltableApp(App):
                 is_takeout = bool(re.fullmatch(r'(?:main\s*[12]?|take\s*out\s*[12]?|테이크\s*아웃\s*[12]?)', title, re.I))
                 if not is_takeout:
                     continue
-                nutrients = dict(group.get('nutrition') or {})
-                if all(nutrients.get(key) is not None for key in ('calories', 'protein', 'carbs')):
-                    continue
-                cache_key = str(group.get('menu') or '')
-                if cache_key not in cache:
-                    cache[cache_key] = self._takeout_fallback_nutrition(cache_key)
-                fallback, note = cache[cache_key]
-                if not fallback:
-                    continue
-                for key, value in fallback.items():
-                    if nutrients.get(key) is None:
-                        nutrients[key] = value
-                group['nutrition'] = nutrients
-                group['source_note'] = (str(group.get('source_note') or '공개 메뉴 영양정보') + '\n' + note).strip()
-                changed = True
+                items = group.get('items')
+                if not isinstance(items, list) or not items:
+                    items = [{'menu': str(group.get('menu') or ''), 'nutrition': dict(group.get('nutrition') or {})}]
+                    group['items'] = items
+                notes = []
+                for item in items:
+                    nutrients = dict(item.get('nutrition') or {})
+                    if all(nutrients.get(key) is not None for key in ('calories', 'protein', 'carbs')):
+                        continue
+                    cache_key = str(item.get('menu') or '')
+                    if not cache_key:
+                        continue
+                    if cache_key not in cache:
+                        cache[cache_key] = self._takeout_fallback_nutrition(cache_key)
+                    fallback, note = cache[cache_key]
+                    if not fallback:
+                        continue
+                    for key, value in fallback.items():
+                        if nutrients.get(key) is None:
+                            nutrients[key] = value
+                    item['nutrition'] = nutrients
+                    if note:
+                        notes.append(note)
+                    changed = True
+                if notes:
+                    group['source_note'] = (str(group.get('source_note') or '공개 메뉴 영양정보') + '\n' + '\n'.join(dict.fromkeys(notes))).strip()
             if changed:
                 output[meal_key] = json.dumps(groups, ensure_ascii=False)
         return output
@@ -2538,6 +2585,9 @@ class WelltableApp(App):
                             if data.get('mealDt','').replace('-','') != item.get('mealDt'):
                                 raise ValueError('메뉴 날짜 불일치')
                             item['_nutrition'] = fresh_detail(data)
+                            # ``mealList`` separates the selectable dishes
+                            # inside a SnackPick MAIN group.
+                            item['_items'] = list(data.get('mealList') or [])
                         except Exception:
                             item['_nutrition'] = {}
                             item['_nutrition_note'] = '상세 영양정보를 불러오지 못했어요. 새로고침해 주세요.'
