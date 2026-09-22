@@ -10,7 +10,7 @@ icon.filename = %(source.dir)s/assets/icon-opaque.png
 # layer so Samsung One UI fills the icon mask without black padding.
 icon.adaptive_foreground.filename = %(source.dir)s/assets/icon-adaptive-foreground.png
 icon.adaptive_background.filename = %(source.dir)s/assets/icon-adaptive-background.png
-version = 2.1.0
+version = 2.1.2
 presplash.filename = %(source.dir)s/assets/startup.png
 android.presplash_color = #091629
 requirements = python3,kivy

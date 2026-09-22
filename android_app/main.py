@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.0'
+APP_VERSION = '2.1.2'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -498,6 +498,16 @@ class Store:
             self.conn.execute("DELETE FROM cafeteria_menus WHERE cafeteria_id IN (SELECT id FROM cafeterias WHERE provider='welstory')")
             self.conn.execute("INSERT INTO app_migrations(name) VALUES('welstory_takeout_refresh_207')")
             self.conn.commit()
+        # Earlier takeout builds could successfully save the main counters
+        # while omitting FreshMeal SnackPick or WonderPlus Take Out rows.  A
+        # one-time provider-only refresh makes the corrected parser visible
+        # immediately without touching another restaurant or any meal choice.
+        if not self.conn.execute("SELECT 1 FROM app_migrations WHERE name='takeout_provider_refresh_212'").fetchone():
+            self.conn.execute("""DELETE FROM cafeteria_menus
+                WHERE cafeteria_id IN (SELECT id FROM cafeterias
+                                       WHERE provider IN ('freshmeal', ?))""", (WONDERPLUS_PROVIDER,))
+            self.conn.execute("INSERT INTO app_migrations(name) VALUES('takeout_provider_refresh_212')")
+            self.conn.commit()
         self.conn.executemany("INSERT OR IGNORE INTO foods(name,category,calories,protein,carbs,fat,serving) VALUES(?,?,?,?,?,?,?)", FOODS)
         # Meal sets are personal presets. Foods are seeded as a library, while
         # plans and health records are always created from the user's own data.
@@ -803,6 +813,11 @@ class Store:
         self.conn.execute('INSERT INTO cafeteria_takeout_selections(meal_date,meal_type,title,calories,protein,carbs) VALUES(?,?,?,?,?,?)',
                           (today, meal_type, title, nutrients.get('calories'), nutrients.get('protein'), nutrients.get('carbs')))
         self._sync_takeout_summary(meal_type)
+        # The popup uses a true return value to distinguish a newly selected
+        # item from a completed meal (None) and from a second-tap removal
+        # (False). Omitting this return made every first selection look like
+        # a completed, locked meal for both Hwaseong and Dongtan.
+        return True
         return True
 
     def select_manual_meal(self, meal_type, food_ids):
