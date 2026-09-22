@@ -39,6 +39,14 @@ class SourceNutritionTests(unittest.TestCase):
         self.assertEqual(rows[0]['nutrition']['calories'],732)
         self.assertNotIn('protein',rows[0]['nutrition'])
 
+    def test_wonder_takeout_counters_are_preserved(self):
+        data={'data':[
+            ['020','TAKE OUT1','20260919','샌드위치',420,'음료'],
+            ['020','Take Out 2','20260919','도시락',560,'반찬'],
+        ]}
+        rows=json.loads(parse_menu(data,'20260919')['lunch'])
+        self.assertEqual([row['title'] for row in rows], ['Take Out1', 'Take Out2'])
+
     def test_welstory_individual_values_not_sum(self):
         doc='d[0]={id:"a",date:"20260919",name:"밥",mealTimeId:"1",nutrition:{calories:600,protein:22},components:[]};d[1]={id:"b",date:"20260919",name:"면",mealTimeId:"1",nutrition:{calories:700,protein:25},components:[]};'
         rows=json.loads(welstory_html(doc,'20260919')['breakfast'])

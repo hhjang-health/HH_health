@@ -15,6 +15,7 @@ import re
 import urllib.parse
 import urllib.request
 import webbrowser
+from difflib import SequenceMatcher
 from datetime import date, datetime, timedelta
 from threading import Thread
 from wonderplus import fetch_menus as fetch_wonderplus_menus, search_sites as search_wonderplus_sites
@@ -51,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.0.9'
+APP_VERSION = '2.0.10'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -320,6 +321,24 @@ FOODS = sorted(
      for name, category, calories, protein, carbs, fat, serving in FOODS],
     key=lambda item: item[0],
 )
+
+
+def _nutrition_match_score(query, candidate):
+    """Return a conservative Korean food-name similarity score."""
+    def clean(value):
+        return re.sub(r'[^0-9a-z가-힣]+', '', str(value).casefold())
+    left, right = clean(query), clean(candidate)
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 1.0
+    if len(left) >= 3 and (left in right or right in left):
+        return .90
+    words = lambda value: {word for word in re.findall(r'[a-z가-힣]{2,}', str(value).casefold())
+                           if word not in {'메인', '종', '메뉴', 'take', 'out', '테이크아웃'}}
+    left_words, right_words = words(query), words(candidate)
+    overlap = len(left_words & right_words) / max(1, len(left_words | right_words))
+    return max(overlap, SequenceMatcher(None, left, right).ratio() * .55)
 
 # CJ FreshMeal exposes the public meal feed separately from the member-only
 # features of its app.  Store the verified numeric id, never a user's account
@@ -2298,6 +2317,8 @@ class WelltableApp(App):
         def worker():
             try:
                 meals = fetch_wonderplus_menus(self._fetch_public_text, restaurant['name'])
+                # Dongtan's Take Out 1/2 are public counters just like K1–K4.
+                meals = self._enrich_takeout_fallbacks(meals)
                 Clock.schedule_once(lambda _dt: finish(meals=meals), 0)
             except Exception as exc:
                 Logger.exception('WonderPlus public menu sync failed')
@@ -2325,19 +2346,18 @@ class WelltableApp(App):
 
     @staticmethod
     def _freshmeal_menu_text(payload):
-        """Preserve every FreshMeal corner as a selectable, readable group."""
+        """Preserve every FreshMeal corner as a selectable, readable group.
+
+        Hwaseong SnackPick is published under feed ``8`` rather than a meal
+        feed. MAIN1/MAIN2 are available for all three meal times, therefore
+        each meal receives those two groups in its takeout picker.
+        """
         data = payload.get('data') or {}
         meals = {}
-        for feed_key, meal_key in (('1', 'breakfast'), ('2', 'lunch'), ('3', 'dinner')):
-            options = data.get(feed_key) or []
-            if not options:
-                meals[meal_key] = ''
-                continue
-            # The service can publish several counters (더고메, 소담상,
-            # 마이보글 등) for one meal.  Keep all of them rather than
-            # flattening the response into one truncated line.
+
+        def groups_from(options):
             groups = []
-            for item in options:
+            for item in options or []:
                 corner = str(item.get('corner') or '').strip()
                 name = str(item.get('name') or '').strip()
                 side = str(item.get('side') or '').strip()
@@ -2346,8 +2366,79 @@ class WelltableApp(App):
                     groups.append({'title': corner or '오늘의 메뉴', 'menu': menu,
                                    'nutrition': item.get('_nutrition', {}), 'source_id': item.get('mealIdx'),
                                    'source_note': item.get('_nutrition_note', '프레시밀 공식 상세정보')})
+            return groups
+
+        snack_groups = groups_from(data.get('8') or data.get(8) or [])
+        for feed_key, meal_key in (('1', 'breakfast'), ('2', 'lunch'), ('3', 'dinner')):
+            # The service can publish several counters (더고메, 소담상,
+            # 마이보글 등) for one meal.  Keep all of them rather than
+            # flattening the response into one truncated line.
+            groups = groups_from(data.get(feed_key) or data.get(int(feed_key)) or [])
+            groups.extend(dict(item, nutrition=dict(item.get('nutrition') or {})) for item in snack_groups)
             meals[meal_key] = json.dumps(groups, ensure_ascii=False) if groups else ''
         return meals
+
+    def _takeout_fallback_nutrition(self, menu_text):
+        """Use the app library first, then the MFDS-backed public search."""
+        pieces = [piece.strip() for piece in re.split(r'[·,/&\n]+', str(menu_text)) if piece.strip()]
+        meaningful = [piece for piece in pieces if not re.fullmatch(r'(?:메인|main)\s*\d*종?', piece, re.I)]
+        queries = meaningful or pieces
+        best = None
+        for query in queries:
+            for name, _category, calories, protein, carbs, _fat, serving in FOODS:
+                score = _nutrition_match_score(query, name)
+                if best is None or score > best[0]:
+                    best = (score, name, calories, protein, carbs, serving)
+        if best and best[0] >= .42:
+            _, name, calories, protein, carbs, serving = best
+            return {'calories': calories, 'protein': protein, 'carbs': carbs}, f'라이브러리 유사 메뉴({name} · {serving}) 기준'
+
+        # The MFDS key remains on Render; the APK asks only the existing
+        # public proxy and receives no credential.
+        for query in queries[:2]:
+            try:
+                payload = self._fetch_public_json(NUTRITION_SEARCH_URL + '?' + urllib.parse.urlencode({'q': query}), SERVICE_BASE_URL + '/')
+                candidates = payload.get('items') or []
+                ranked = sorted(candidates, key=lambda item: _nutrition_match_score(query, item.get('name', '')), reverse=True)
+                if ranked:
+                    item = ranked[0]
+                    nutrition = {key: item.get(key) for key in ('calories', 'protein', 'carbs') if item.get(key) is not None}
+                    if nutrition:
+                        return nutrition, f"식약처 유사 식품({item.get('name', query)} · {item.get('serving', '')}) 기준"
+            except Exception:
+                continue
+        return {}, ''
+
+    def _enrich_takeout_fallbacks(self, meals):
+        """Fill only undisclosed MAIN/Take Out nutrition with a safe fallback."""
+        output = dict(meals or {})
+        cache = {}
+        for meal_key, raw in output.items():
+            groups = self._menu_groups(raw)
+            changed = False
+            for group in groups:
+                title = str(group.get('title') or '')
+                is_takeout = bool(re.fullmatch(r'(?:main\s*[12]?|take\s*out\s*[12]?|테이크\s*아웃\s*[12]?)', title, re.I))
+                if not is_takeout:
+                    continue
+                nutrients = dict(group.get('nutrition') or {})
+                if all(nutrients.get(key) is not None for key in ('calories', 'protein', 'carbs')):
+                    continue
+                cache_key = str(group.get('menu') or '')
+                if cache_key not in cache:
+                    cache[cache_key] = self._takeout_fallback_nutrition(cache_key)
+                fallback, note = cache[cache_key]
+                if not fallback:
+                    continue
+                for key, value in fallback.items():
+                    if nutrients.get(key) is None:
+                        nutrients[key] = value
+                group['nutrition'] = nutrients
+                group['source_note'] = (str(group.get('source_note') or '공개 메뉴 영양정보') + '\n' + note).strip()
+                changed = True
+            if changed:
+                output[meal_key] = json.dumps(groups, ensure_ascii=False)
+        return output
 
     @staticmethod
     def _fetch_public_text(url, accept='application/json, text/plain, */*', referer='', form=None):
@@ -2443,6 +2534,7 @@ class WelltableApp(App):
                             item['_nutrition'] = {}
                             item['_nutrition_note'] = '상세 영양정보를 불러오지 못했어요. 새로고침해 주세요.'
                 meals = self._freshmeal_menu_text(payload)
+                meals = self._enrich_takeout_fallbacks(meals)
                 # CJ FreshMeal can have no feed on a given date.  Save that
                 # empty state and render it inline instead of interrupting.
                 Clock.schedule_once(lambda _dt, cafe_id=restaurant['id'], fetched=meals:

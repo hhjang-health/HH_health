@@ -48,10 +48,12 @@ def parse_menu(payload, menu_date, detail_lookup=None):
         if len(row) < 6 or str(row[2]) != menu_date:
             continue
         key = keys.get(str(row[0]))
-        kitchen = re.fullmatch(r'(?:KITCHEN|키친|K)\s*([1-4])', str(row[1]).strip(), re.I)
-        if not key or not kitchen:
+        counter = str(row[1]).strip()
+        kitchen = re.fullmatch(r'(?:KITCHEN|키친|K)\s*([1-4])', counter, re.I)
+        takeout = re.fullmatch(r'(?:TAKE\s*OUT|TAKEOUT|테이크\s*아웃)\s*([12])?', counter, re.I)
+        if not key or not (kitchen or takeout):
             continue
-        title = 'K' + kitchen[1]
+        title = ('K' + kitchen[1]) if kitchen else ('Take Out' + (takeout[1] or ''))
         parts = [html.unescape(re.sub(r'<[^>]+>', ' ', str(value))).strip()
                  for value in (row[3], row[5]) if value]
         menu = re.sub(r'\s+', ' ', ' · '.join(parts)).strip()
