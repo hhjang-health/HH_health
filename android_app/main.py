@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.0.10'
+APP_VERSION = '2.1.1'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1486,10 +1486,15 @@ class WelltableApp(App):
             request.setTitle(f'살빼자 v{self.update_version}')
             request.setDescription('최신 APK를 다운로드하고 있어요.')
             request.setMimeType('application/vnd.android.package-archive')
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            # Request is a separately loaded nested Java class. Accessing it
+            # through DownloadManager works in Java syntax but raises an
+            # AttributeError through PyJNIus before the download is enqueued.
+            request.setNotificationVisibility(Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
                                                        f'살빼자_{self.update_version}.apk')
-            activity.getSystemService(Context.DOWNLOAD_SERVICE).enqueue(request)
+            download_id = activity.getSystemService(Context.DOWNLOAD_SERVICE).enqueue(request)
+            if int(download_id) <= 0:
+                raise RuntimeError('DownloadManager enqueue failed')
             self._health_notice('다운로드를 시작했어요', '완료 알림을 누르면 최신 버전을 설치할 수 있어요.')
             return True
         except Exception:
