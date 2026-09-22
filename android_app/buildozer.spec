@@ -5,7 +5,12 @@ package.domain = com.welltable
 source.dir = .
 source.include_exts = py,kv,ttf,otf,png,json,db
 icon.filename = %(source.dir)s/assets/icon.png
-version = 2.0.7
+# Android launchers otherwise wrap a legacy icon in their own dark adaptive
+# background.  Keep the approved art as foreground over a matching peach
+# layer so Samsung One UI fills the icon mask without black padding.
+icon.adaptive_foreground.filename = %(source.dir)s/assets/icon-adaptive-foreground.png
+icon.adaptive_background.filename = %(source.dir)s/assets/icon-adaptive-background.png
+version = 2.0.8
 presplash.filename = %(source.dir)s/assets/startup.png
 android.presplash_color = #091629
 requirements = python3,kivy

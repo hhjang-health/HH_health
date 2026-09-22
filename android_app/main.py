@@ -51,7 +51,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.0.7'
+APP_VERSION = '2.0.8'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1599,7 +1599,11 @@ class WelltableApp(App):
         # Existing named counters stay in the primary vertical list. All
         # remaining provider items are available as takeout without changing
         # that established list layout.
-        known_main = set(WELSTORY_HOME_GROUPS) | {'더고메', '소담상', '마이보글', 'K1', 'K2', 'K3', 'K4', '오늘의 메뉴'}
+        # Only counters deliberately chosen for the home view may remain in
+        # the primary list.  Generic labels such as “오늘의 메뉴” are not a
+        # named main counter; keeping them here previously hid their dishes
+        # from the takeout picker.
+        known_main = set(WELSTORY_HOME_GROUPS) | {'더고메', '소담상', '마이보글', 'K1', 'K2', 'K3', 'K4'}
         primary_groups = [group for group in groups if str(group.get('title') or '') in known_main]
         takeout_groups = [group for group in groups if group not in primary_groups]
         has_menu = bool(primary_groups or takeout_groups)
@@ -2871,11 +2875,6 @@ class WelltableApp(App):
             Thread(target=worker, daemon=True).start()
 
         lookup.bind(on_release=fill_from_search)
-        # Narrow, centered entry blocks remain usable in portrait mode and
-        # avoid an accidental horizontal overflow on small Samsung screens.
-        for item in fields['inputs']:
-            item.size_hint_x = .5
-            item.pos_hint = {'center_x': .5}
         def save(_button):
             try:
                 self.store.add_food(fields['inputs'][0].text, fields['inputs'][1].text,
