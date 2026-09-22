@@ -52,7 +52,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.5'
+APP_VERSION = '2.1.6'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -2144,13 +2144,20 @@ class WelltableApp(App):
                                      color=(.84,1,.93,1) if selected else (.86,.91,.96,1), shorten=False)
                 item_button.bind(size=lambda widget, size: setattr(widget, 'text_size', (size[0], size[1])))
                 def toggle(_button, meal_key=self.selected_cafeteria_meal, title=takeout_title,
-                           nutrients=dict(choice.get('nutrition') or {}), menu_name=menu_raw):
+                           nutrients=dict(choice.get('nutrition') or {}), menu_name=menu_raw,
+                           choice_row=row, item_label=item_button):
                     result = self.store.toggle_takeout_choice(meal_key, title, nutrients)
                     if result is None:
                         self._health_notice('완료된 식단이에요', '오늘의 식단 블록을 다시 눌러 완료를 해제한 뒤 변경할 수 있어요.')
                         return
                     self._takeout_flash = (meal_key, title) if result else None
-                    holder['popup'].dismiss()
+                    # Keep this popup mounted.  Closing and reopening it for
+                    # every tap briefly removed Kivy's modal dimmer, which
+                    # made the entire screen behind it flash brightly.
+                    choice_row.surface_color = [.05,.58,.50,1] if result else [.065,.09,.145,1]
+                    choice_row.surface_opacity = .96 if result else .58
+                    choice_row.background_color = [1,1,1,.90] if result else [0,0,0,0]
+                    item_label.color = (.84,1,.93,1) if result else (.86,.91,.96,1)
                     self.refresh_home()
                     if result and not all(nutrients.get(key) is not None for key in ('calories', 'protein', 'carbs')):
                         def enrich_selected(name=menu_name, selected_meal=meal_key, selected_title=title):
@@ -2163,7 +2170,6 @@ class WelltableApp(App):
                             except Exception:
                                 Logger.exception('Takeout nutrition lookup failed')
                         Thread(target=enrich_selected, daemon=True).start()
-                    Clock.schedule_once(lambda _dt: self.popup_takeout_choices(restaurant, groups), .05)
                 item_button.bind(on_release=toggle)
                 row.add_widget(item_button)
                 detail_item = {**dict(group), 'menu': menu_raw, 'nutrition': dict(choice.get('nutrition') or {})}
