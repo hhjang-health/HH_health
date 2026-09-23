@@ -27,6 +27,7 @@ import androidx.health.connect.client.records.WeightRecord;
 import androidx.health.connect.client.request.ReadRecordsRequest;
 import androidx.health.connect.client.request.AggregateRequest;
 import androidx.health.connect.client.aggregate.AggregationResult;
+import androidx.health.connect.client.aggregate.AggregateMetric;
 import androidx.health.connect.client.response.ReadRecordsResponse;
 import androidx.health.connect.client.time.TimeRangeFilter;
 import androidx.health.connect.client.units.Energy;
@@ -369,25 +370,38 @@ public final class HealthConnectBridge {
         // separate Health Connect record types.  They are intentionally read
         // from exactly the same local-day range as steps so every number on
         // the tile refers to the same day.
-        double activeCalories = 0d;
+        // Aggregation is the reliable path for Samsung Health.  A live
+        // Samsung counter can be represented by a mutable/overlapping
+        // interval; reading individual records either returns no interval or
+        // double-counts it.  Health Connect's aggregate is provider-aware and
+        // returns the same current-day value shown in Samsung Health.
+        double activeCalories = aggregateEnergy(client,
+                ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL,
+                TimeRangeFilter.between(todayStart, tomorrowStart));
         // Samsung Health can publish today's activity calories as an
         // interval whose end is the next local midnight.  Querying only up
         // to "now" excludes that still-open interval and incorrectly shows
         // 0 kcal.  This is still *activity* energy only, never total energy.
-        for (ActiveCaloriesBurnedRecord item : read(client, ActiveCaloriesBurnedRecord.class,
-                TimeRangeFilter.between(todayStart, tomorrowStart))) {
-            activeCalories += item.getEnergy().getKilocalories();
+        if (activeCalories <= 0d) {
+            for (ActiveCaloriesBurnedRecord item : read(client, ActiveCaloriesBurnedRecord.class,
+                    TimeRangeFilter.between(todayStart, tomorrowStart))) {
+                activeCalories += item.getEnergy().getKilocalories();
+            }
         }
         // Samsung Health installations often expose today's activity ring
         // only through TotalCaloriesBurnedRecord. Derive active energy by
         // subtracting elapsed resting energy; never display the raw total.
         // This matches Samsung Health's '활동 칼로리' card while retaining the
         // dedicated ActiveCalories record whenever the provider offers it.
-        double totalCalories = 0d;
+        double totalCalories = aggregateEnergy(client,
+                TotalCaloriesBurnedRecord.ENERGY_TOTAL,
+                TimeRangeFilter.between(todayStart, tomorrowStart));
         if (activeCalories <= 0d) {
-            for (TotalCaloriesBurnedRecord item : read(client, TotalCaloriesBurnedRecord.class,
-                    TimeRangeFilter.between(todayStart, tomorrowStart))) {
-                totalCalories += item.getEnergy().getKilocalories();
+            if (totalCalories <= 0d) {
+                for (TotalCaloriesBurnedRecord item : read(client, TotalCaloriesBurnedRecord.class,
+                        TimeRangeFilter.between(todayStart, tomorrowStart))) {
+                    totalCalories += item.getEnergy().getKilocalories();
+                }
             }
             if (totalCalories > 0d) {
                 double elapsedDayFraction = Math.max(0d, Math.min(1d,
@@ -537,6 +551,28 @@ public final class HealthConnectBridge {
             try { for (StepsRecord item : read(client, StepsRecord.class, range)) total += item.getCount(); }
             catch (Exception ignoredAgain) { }
             return total;
+        }
+    }
+
+    /** Read an energy aggregate without depending on a provider's interval layout. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static double aggregateEnergy(final HealthConnectClient client,
+                                          final AggregateMetric<Energy> metric,
+                                          final TimeRangeFilter range) {
+        try {
+            AggregationResult result = (AggregationResult) BuildersKt.runBlocking(
+                    EmptyCoroutineContext.INSTANCE,
+                    new Function2<CoroutineScope, Continuation<? super AggregationResult>, Object>() {
+                        @Override public Object invoke(CoroutineScope scope, Continuation<? super AggregationResult> continuation) {
+                            AggregateRequest request = new AggregateRequest(
+                                    Collections.singleton(metric), range, Collections.emptySet());
+                            return client.aggregate(request, continuation);
+                        }
+                    });
+            Energy total = (Energy) result.get(metric);
+            return total == null ? 0d : Math.max(0d, total.getKilocalories());
+        } catch (Exception ignored) {
+            return 0d;
         }
     }
 }

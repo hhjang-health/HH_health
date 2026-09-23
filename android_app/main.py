@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.8'
+APP_VERSION = '2.1.9'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -2034,6 +2034,25 @@ class WelltableApp(App):
     def refresh_report(self):
         root=self.root.get_screen('report'); ws=self.store.workouts(); total=sum(x['minutes'] for x in ws if date.fromisoformat(x['workout_date'])>=date.today()-timedelta(days=6)); kcal=sum(x['calories'] for x in ws if date.fromisoformat(x['workout_date'])>=date.today()-timedelta(days=6)); plan=self.store.today_plan(); score=min(99,58+int(total*.14)+sum(x[2] for x in plan)*4)
         root.ids.score.text=str(score);root.ids.report_minutes.text=f'{total}분';root.ids.report_kcal.text=f'{kcal:,} kcal'
+        # “섭취” represents meals actually recorded as complete, rather than
+        # suggestions that still remain in today's plan.  This matches the
+        # NutritionRecord written to Health Connect on completion.
+        eaten = [meal for _kind, meal, completed in plan if completed]
+        intake_calories = round(sum(float(meal.get('calories') or 0) for meal in eaten))
+        intake_protein = round(sum(float(meal.get('protein') or 0) for meal in eaten), 1)
+        profile = self.store.profile()
+        calorie_goal = max(1, round(float(profile.get('target_calories') or 1800)))
+        protein_goal = max(.1, float(profile.get('target_protein') or 100))
+        calorie_percent = round(intake_calories / calorie_goal * 100)
+        protein_percent = round(intake_protein / protein_goal * 100)
+        root.ids.report_calorie_value.text = f'{calorie_percent}%'
+        root.ids.report_calorie_detail.text = f'{intake_calories:,} / {calorie_goal:,} kcal'
+        root.ids.report_calorie_progress.max = 100
+        root.ids.report_calorie_progress.value = min(100, calorie_percent)
+        root.ids.report_protein_value.text = f'{protein_percent}%'
+        root.ids.report_protein_detail.text = f'{intake_protein:g} / {protein_goal:g} g'
+        root.ids.report_protein_progress.max = 100
+        root.ids.report_protein_progress.value = min(100, protein_percent)
         # Each graph comes from the same persisted source that powers the
         # profile card.  Sorting by date avoids the “latest first” query order
         # drawing a reversed trend.

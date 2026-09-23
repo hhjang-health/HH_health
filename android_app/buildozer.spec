@@ -10,7 +10,7 @@ icon.filename = %(source.dir)s/assets/icon-opaque-v217.png
 # avoiding the black second frame visible in Samsung One UI.
 icon.adaptive_foreground.filename = %(source.dir)s/assets/icon-adaptive-foreground-v218.png
 icon.adaptive_background.filename = %(source.dir)s/assets/icon-adaptive-background.png
-version = 2.1.8
+version = 2.1.9
 presplash.filename = %(source.dir)s/assets/startup.png
 android.presplash_color = #091629
 requirements = python3,kivy
