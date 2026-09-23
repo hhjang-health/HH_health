@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.1.9'
+APP_VERSION = '2.2.0'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -643,6 +643,48 @@ class Store:
             result.append((kind,self.meal_set(s),row['completed']))
         return result
 
+    def intake_goal_history(self, days=7):
+        """Return completed-meal goal percentages for the recent local days.
+
+        A cafeteria selection replaces the ordinary suggested plan for one
+        meal time, so it must win over a same-day plan row.  Historical rows
+        stay in SQLite and make the Report graph useful without a server.
+        """
+        profile = self.profile()
+        calorie_goal = max(1, round(float(profile.get('target_calories') or 1800)))
+        protein_goal = max(.1, float(profile.get('target_protein') or 100))
+        rows = []
+        for offset in range(max(1, days) - 1, -1, -1):
+            day = (date.today() - timedelta(days=offset)).isoformat()
+            calories = protein = 0.0
+            cafeteria = self.conn.execute('''SELECT meal_type, calories, protein
+                                              FROM cafeteria_selections
+                                              WHERE meal_date=? AND completed=1''', (day,)).fetchall()
+            cafeteria_kinds = set()
+            for item in cafeteria:
+                cafeteria_kinds.add(item['meal_type'])
+                calories += float(item['calories'] or 0)
+                protein += float(item['protein'] or 0)
+            plans = self.conn.execute('''SELECT p.meal_type, m.*
+                                         FROM plans p JOIN meal_sets m ON m.id=p.set_id
+                                         WHERE p.plan_date=? AND p.completed=1''', (day,)).fetchall()
+            for item in plans:
+                if item['meal_type'] in cafeteria_kinds:
+                    continue
+                meal = self.meal_set(item)
+                calories += float(meal.get('calories') or 0)
+                protein += float(meal.get('protein') or 0)
+            rows.append({
+                'date': day,
+                'calorie_percent': round(calories / calorie_goal * 100),
+                'protein_percent': round(protein / protein_goal * 100),
+                'calories': round(calories),
+                'protein': round(protein, 1),
+                'calorie_goal': calorie_goal,
+                'protein_goal': protein_goal,
+            })
+        return rows
+
     def sets(self):
         return [self.meal_set(x) for x in self.conn.execute("""
             SELECT * FROM meal_sets WHERE deleted=0
@@ -942,6 +984,13 @@ class Store:
         active_minutes = int(snapshot.get('active_minutes', profile.get('active_minutes') or 0) or 0)
         active_calories = int(snapshot.get('active_calories', profile.get('active_calories') or 0) or 0)
         total_calories = int(snapshot.get('total_calories', profile.get('total_calories') or 0) or 0)
+        # Samsung Health can display activity energy without exporting either
+        # calorie record.  In that case retain an on-device estimate based on
+        # the Health Connect measurements it *does* share.  The workout screen
+        # still falls back to raw total energy when even an estimate is not
+        # possible.
+        if active_calories <= 0:
+            active_calories = self._estimate_active_calories(snapshot, profile)
         distance_meters = int(snapshot.get('distance_meters', profile.get('distance_meters') or 0) or 0)
         self.conn.execute("""INSERT INTO profile(id,name,birthday,heart_rate,sleep_hours,steps,active_minutes,active_calories,total_calories,distance_meters,height_cm,basal_kcal,health_connected)
             VALUES(1,?,?,?,?,?,?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET
@@ -971,6 +1020,47 @@ class Store:
                 self.conn.execute('INSERT INTO workouts(workout_date,title,minutes,calories,source,health_key) VALUES(?,?,?,?,?,?)',
                                   (when, title, minutes, 0, 'health_connect', health_key))
         self.conn.commit()
+
+    def _estimate_active_calories(self, snapshot, profile):
+        """Estimate active-only energy when the provider omits calorie records."""
+        weight = snapshot.get('weight')
+        if weight is None:
+            last = self.conn.execute('SELECT weight FROM body WHERE COALESCE(weight,0)>0 ORDER BY log_date DESC LIMIT 1').fetchone()
+            weight = last['weight'] if last else None
+        try:
+            kg = min(250.0, max(35.0, float(weight or 70.0)))
+        except (TypeError, ValueError):
+            kg = 70.0
+        # MET minus resting energy produces activity calories, not total burn.
+        met_by_name = (
+            (('달리', '러닝', 'run'), 9.8), (('자전거', '사이클', 'cycle'), 6.8),
+            (('수영', 'swim'), 7.0), (('근력', '웨이트', 'weight'), 5.0),
+            (('등산', '하이킹', 'hiking'), 6.0), (('걷', 'walk'), 4.7),
+        )
+        estimated = 0.0
+        for workout in snapshot.get('workouts') or []:
+            try:
+                minutes = max(0.0, float(workout.get('minutes') or 0))
+            except (TypeError, ValueError):
+                continue
+            title = str(workout.get('title') or '').lower()
+            met = 4.7
+            for terms, value in met_by_name:
+                if any(term in title for term in terms):
+                    met = value
+                    break
+            estimated += max(0.0, met - 1.0) * kg * minutes / 60.0
+        if estimated <= 0:
+            minutes = max(0.0, float(snapshot.get('active_minutes') or 0))
+            if minutes > 0:
+                estimated = 3.7 * kg * minutes / 60.0
+            else:
+                steps = max(0.0, float(snapshot.get('steps') or 0))
+                distance_km = max(0.0, float(snapshot.get('distance_meters') or 0)) / 1000.0
+                # Pick one proxy: adding steps and distance counts the same
+                # walk twice.  Both constants are activity-only estimates.
+                estimated = max(steps * .045 * kg / 70.0, distance_km * kg * .62)
+        return max(0, round(estimated))
 
 
 class RoundedCard(BoxLayout):
@@ -1269,6 +1359,59 @@ class BodyTrendChart(Widget):
                 Line(points=points, width=dp(2.1), joint='round')
             for index in range(0, len(points), 2):
                 Ellipse(pos=(points[index] - dp(3.3), points[index + 1] - dp(3.3)), size=(dp(6.6), dp(6.6)))
+
+
+class GoalTrendChart(Widget):
+    """Seven-day goal chart with an explicit percentage and date axis."""
+    values = ListProperty([])
+    dates = ListProperty([])
+    accent = ListProperty([.98, .36, .59, 1])
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._y_axis = Label(text='(%)', font_size=dp(8), color=(.52,.61,.76,1),
+                             halign='left', valign='top')
+        self.add_widget(self._y_axis)
+        self._date_labels = []
+        self.bind(pos=self._redraw, size=self._redraw, values=self._redraw,
+                  dates=self._redraw, accent=self._redraw)
+
+    def _redraw(self, *_):
+        count = len(self.dates)
+        while len(self._date_labels) < count:
+            label = Label(font_size=dp(8), color=(.52,.61,.76,1), halign='center', valign='middle')
+            self._date_labels.append(label); self.add_widget(label)
+        for index, label in enumerate(self._date_labels):
+            label.opacity = 1 if index < count else 0
+        left, right = self.x + dp(24), self.right - dp(5)
+        bottom, top = self.y + dp(19), self.top - dp(5)
+        self._y_axis.pos = (self.x + dp(1), top - dp(10)); self._y_axis.size = (dp(22), dp(11))
+        span_x = max(1, right - left)
+        for index, label in enumerate(self._date_labels[:count]):
+            x = left + span_x * index / max(1, count - 1)
+            label.text = str(self.dates[index])[5:].replace('-', '/') if len(str(self.dates[index])) >= 10 else str(self.dates[index])
+            label.pos = (x - dp(18), self.y); label.size = (dp(36), dp(16))
+        vals = [max(0.0, float(value or 0)) for value in self.values]
+        max_value = max(100.0, max(vals, default=0.0))
+        max_value = math.ceil(max_value / 25.0) * 25.0
+        self.canvas.clear()
+        with self.canvas:
+            Color(.70, .79, .94, .14)
+            for fraction in (0, .5, 1):
+                y = bottom + (top - bottom) * fraction
+                Line(points=[left, y, right, y], width=dp(.7))
+            if not vals:
+                return
+            points = []
+            for index, value in enumerate(vals):
+                x = left + span_x * index / max(1, len(vals) - 1)
+                y = bottom + (top - bottom) * min(1.0, value / max_value)
+                points.extend((x, y))
+            Color(*self.accent)
+            if len(points) > 2:
+                Line(points=points, width=dp(2.1), joint='round')
+            for index in range(0, len(points), 2):
+                Ellipse(pos=(points[index] - dp(3), points[index + 1] - dp(3)), size=(dp(6), dp(6)))
 
 class MealCard(ButtonBehavior, BoxLayout):
     title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); glow = NumericProperty(0)
@@ -2034,25 +2177,17 @@ class WelltableApp(App):
     def refresh_report(self):
         root=self.root.get_screen('report'); ws=self.store.workouts(); total=sum(x['minutes'] for x in ws if date.fromisoformat(x['workout_date'])>=date.today()-timedelta(days=6)); kcal=sum(x['calories'] for x in ws if date.fromisoformat(x['workout_date'])>=date.today()-timedelta(days=6)); plan=self.store.today_plan(); score=min(99,58+int(total*.14)+sum(x[2] for x in plan)*4)
         root.ids.score.text=str(score);root.ids.report_minutes.text=f'{total}분';root.ids.report_kcal.text=f'{kcal:,} kcal'
-        # “섭취” represents meals actually recorded as complete, rather than
-        # suggestions that still remain in today's plan.  This matches the
-        # NutritionRecord written to Health Connect on completion.
-        eaten = [meal for _kind, meal, completed in plan if completed]
-        intake_calories = round(sum(float(meal.get('calories') or 0) for meal in eaten))
-        intake_protein = round(sum(float(meal.get('protein') or 0) for meal in eaten), 1)
-        profile = self.store.profile()
-        calorie_goal = max(1, round(float(profile.get('target_calories') or 1800)))
-        protein_goal = max(.1, float(profile.get('target_protein') or 100))
-        calorie_percent = round(intake_calories / calorie_goal * 100)
-        protein_percent = round(intake_protein / protein_goal * 100)
-        root.ids.report_calorie_value.text = f'{calorie_percent}%'
-        root.ids.report_calorie_detail.text = f'{intake_calories:,} / {calorie_goal:,} kcal'
-        root.ids.report_calorie_progress.max = 100
-        root.ids.report_calorie_progress.value = min(100, calorie_percent)
-        root.ids.report_protein_value.text = f'{protein_percent}%'
-        root.ids.report_protein_detail.text = f'{intake_protein:g} / {protein_goal:g} g'
-        root.ids.report_protein_progress.max = 100
-        root.ids.report_protein_progress.value = min(100, protein_percent)
+        # Completed meals are actual intake; suggested-but-untapped cards do
+        # not inflate the daily percentage.  Keep a seven-day history so the
+        # report uses the same plot format as body-change cards.
+        intake_history = self.store.intake_goal_history(7)
+        today_intake = intake_history[-1]
+        root.ids.report_calorie_value.text = f"{today_intake['calorie_percent']}%"
+        root.ids.report_protein_value.text = f"{today_intake['protein_percent']}%"
+        root.ids.report_calorie_trend.values = [item['calorie_percent'] for item in intake_history]
+        root.ids.report_calorie_trend.dates = [item['date'] for item in intake_history]
+        root.ids.report_protein_trend.values = [item['protein_percent'] for item in intake_history]
+        root.ids.report_protein_trend.dates = [item['date'] for item in intake_history]
         # Each graph comes from the same persisted source that powers the
         # profile card.  Sorting by date avoids the “latest first” query order
         # drawing a reversed trend.

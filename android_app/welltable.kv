@@ -1430,23 +1430,9 @@
                             halign: 'right'
                             valign: 'middle'
                             text_size: self.size
-                    Label:
-                        id: report_calorie_detail
-                        text: '0 / 1,800 kcal'
-                        font_name: app.font_name
-                        size_hint_y: None
-                        height: dp(27)
-                        font_size: dp(12)
-                        color: .63,.70,.84,1
-                        halign: 'left'
-                        valign: 'middle'
-                        text_size: self.size
-                    StepProgress:
-                        id: report_calorie_progress
-                        max: 100
-                        value: 0
-                        size_hint_y: None
-                        height: dp(13)
+                    GoalTrendChart:
+                        id: report_calorie_trend
+                        accent: .98,.36,.59,1
                 RoundedCard:
                     size_hint_y: None
                     height: dp(142)
@@ -1477,23 +1463,9 @@
                             halign: 'right'
                             valign: 'middle'
                             text_size: self.size
-                    Label:
-                        id: report_protein_detail
-                        text: '0 / 100 g'
-                        font_name: app.font_name
-                        size_hint_y: None
-                        height: dp(27)
-                        font_size: dp(12)
-                        color: .63,.70,.84,1
-                        halign: 'left'
-                        valign: 'middle'
-                        text_size: self.size
-                    StepProgress:
-                        id: report_protein_progress
-                        max: 100
-                        value: 0
-                        size_hint_y: None
-                        height: dp(13)
+                    GoalTrendChart:
+                        id: report_protein_trend
+                        accent: .64,.96,.28,1
                 RoundedCard:
                     size_hint_y: None
                     height: dp(142)
