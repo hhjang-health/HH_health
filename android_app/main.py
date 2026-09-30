@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.2.8'
+APP_VERSION = '2.2.9'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -411,7 +411,9 @@ class Store:
         """Keep order while rendering duplicate portions as a count."""
         counts, order = {}, []
         for food in foods:
-            name = str(food.get('name') or '').strip()
+            # Stored 기타 entries use ``title`` while library rows use
+            # ``name``; both must render in the same compact summary.
+            name = str(food.get('name') or food.get('title') or '').strip()
             if not name:
                 continue
             if name not in counts:
@@ -440,6 +442,9 @@ class Store:
         CREATE TABLE IF NOT EXISTS cafeteria_menus(cafeteria_id INTEGER NOT NULL, menu_date TEXT NOT NULL, breakfast TEXT, lunch TEXT, dinner TEXT, synced_at TEXT, PRIMARY KEY(cafeteria_id, menu_date));
         CREATE TABLE IF NOT EXISTS cafeteria_selections(meal_date TEXT, meal_type TEXT, title TEXT, calories REAL, protein REAL, carbs REAL, source TEXT DEFAULT 'cafeteria', PRIMARY KEY(meal_date, meal_type));
         CREATE TABLE IF NOT EXISTS cafeteria_takeout_selections(meal_date TEXT NOT NULL, meal_type TEXT NOT NULL, title TEXT NOT NULL, calories REAL, protein REAL, carbs REAL, PRIMARY KEY(meal_date, meal_type, title));
+        -- Other foods are already consumed when entered. Keep them separate
+        -- from the three planned-meal slots so repeated additions append.
+        CREATE TABLE IF NOT EXISTS other_intakes(id INTEGER PRIMARY KEY, intake_date TEXT NOT NULL, title TEXT NOT NULL, calories REAL NOT NULL DEFAULT 0, protein REAL NOT NULL DEFAULT 0, carbs REAL NOT NULL DEFAULT 0);
         """)
         self._ensure_column('body', 'heart_rate', 'INTEGER')
         self._ensure_column('body', 'sleep_hours', 'REAL')
@@ -674,6 +679,13 @@ class Store:
                 meal = self.meal_set(item)
                 calories += float(meal.get('calories') or 0)
                 protein += float(meal.get('protein') or 0)
+            # 기타 식단 is an explicit consumption record, so it contributes
+            # immediately and never needs the completion toggle used by plans.
+            other = self.conn.execute('''SELECT calories, protein FROM other_intakes
+                                          WHERE intake_date=?''', (day,)).fetchall()
+            for item in other:
+                calories += float(item['calories'] or 0)
+                protein += float(item['protein'] or 0)
             rows.append({
                 'date': day,
                 'calorie_percent': round(calories / calorie_goal * 100),
@@ -927,6 +939,35 @@ class Store:
         return {'title': title, 'calories': round(sum(food['calories'] for food in foods)),
                 'protein': round(sum(food['protein'] for food in foods), 1),
                 'carbs': round(sum(food['carbs'] for food in foods), 1)}
+
+    def other_intakes_today(self):
+        """Return all independently eaten foods for today's 기타 slot."""
+        return [dict(row) for row in self.conn.execute(
+            '''SELECT * FROM other_intakes WHERE intake_date=? ORDER BY id''',
+            (date.today().isoformat(),)
+        )]
+
+    def add_other_intake(self, food_ids):
+        """Append an immediately-consumed food choice instead of replacing it."""
+        rows = [dict(row) for row in self.conn.execute(
+            'SELECT * FROM foods WHERE id IN (%s)' % ','.join('?' * len(food_ids)), food_ids
+        ).fetchall()] if food_ids else []
+        lookup = {food['id']: food for food in rows}
+        foods = [lookup[food_id] for food_id in food_ids if food_id in lookup]
+        if not foods:
+            raise ValueError('최소 한 가지 음식을 선택해 주세요.')
+        item = {
+            'title': self.compact_food_names(foods),
+            'calories': round(sum(float(food['calories'] or 0) for food in foods)),
+            'protein': round(sum(float(food['protein'] or 0) for food in foods), 1),
+            'carbs': round(sum(float(food['carbs'] or 0) for food in foods), 1),
+        }
+        self.conn.execute('''INSERT INTO other_intakes(intake_date,title,calories,protein,carbs)
+                             VALUES(?,?,?,?,?)''',
+                          (date.today().isoformat(), item['title'], item['calories'],
+                           item['protein'], item['carbs']))
+        self.conn.commit()
+        return item
 
     def clear_cafeteria_meal(self, meal_type):
         """Return this meal to its ordinary saved set without touching others."""
@@ -1414,7 +1455,7 @@ class GoalTrendChart(Widget):
                 Ellipse(pos=(points[index] - dp(3), points[index + 1] - dp(3)), size=(dp(6), dp(6)))
 
 class MealCard(ButtonBehavior, BoxLayout):
-    title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); glow = NumericProperty(0)
+    title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); direct_add = BooleanProperty(False); glow = NumericProperty(0)
 
 
 class MenuMarquee(StencilView):
@@ -1521,7 +1562,7 @@ class WelltableApp(App):
     update_available = BooleanProperty(False)
     update_version = StringProperty('')
     update_notes = StringProperty('')
-    meal_names = {'breakfast':'아침','lunch':'점심','dinner':'저녁'}
+    meal_names = {'breakfast':'아침','lunch':'점심','dinner':'저녁','other':'기타'}
     motivation_lines = (
         '오늘의 작은 선택이 내일의 컨디션을 만듭니다.',
         '완벽보다 꾸준함. 한 끼부터 가볍게 시작해요.',
@@ -1733,11 +1774,16 @@ class WelltableApp(App):
 
     def refresh_home(self):
         root=self.root.get_screen('home'); box=root.ids.plan_box; box.clear_widgets()
-        plan=self.store.today_plan(); total=sum(s['calories'] for _,s,_ in plan); protein=sum(s['protein'] for _,s,_ in plan); carbs=sum(s.get('carbs', 0) for _,s,_ in plan); done=sum(done for _,_,done in plan)
+        plan=self.store.today_plan()
+        other_intakes = self.store.other_intakes_today()
+        total=sum(s['calories'] for _,s,_ in plan) + sum(float(item.get('calories') or 0) for item in other_intakes)
+        protein=sum(s['protein'] for _,s,_ in plan) + sum(float(item.get('protein') or 0) for item in other_intakes)
+        carbs=sum(s.get('carbs', 0) for _,s,_ in plan) + sum(float(item.get('carbs') or 0) for item in other_intakes)
+        done=sum(done for _,_,done in plan)
         group=RoundedCard(
             orientation='vertical',
             size_hint_y=None,
-            height=dp(226),
+            height=dp(304),
             radius=dp(26),
             background_color=[.052,.063,.090,.78],
             border_color=[.94,.97,1,.085],
@@ -1784,6 +1830,20 @@ class WelltableApp(App):
             if completed and getattr(self, '_meal_flash_kind', '') == kind:
                 Clock.schedule_once(lambda _dt, target=card: (Animation(glow=1, duration=.15) + Animation(glow=0, duration=.65)).start(target), 0)
             group.add_widget(card)
+        other_title = '기타 식단' if other_intakes else '기타 식단 추가'
+        other_foods = self.store.compact_food_names(other_intakes) if other_intakes else '먹은 음식을 바로 기록해 주세요.'
+        other_card = MealCard(
+            title=other_title,
+            foods=other_foods,
+            calories=f"{round(sum(float(item.get('calories') or 0) for item in other_intakes)):,} kcal" if other_intakes else '',
+            protein=f"단백질 {sum(float(item.get('protein') or 0) for item in other_intakes):.1f}g" if other_intakes else '',
+            color=[.72,.46,.18,.86], meal_type='other', badge='기타', divider=True,
+            direct_add=True,
+        )
+        other_card.ids.done.disabled = True
+        other_card.ids.done.opacity = 0
+        other_card.ids.done.width = 0
+        group.add_widget(other_card)
         box.add_widget(group)
         targets = self.store.profile()
         target_kcal = float(targets.get('target_calories') or 1800)
@@ -2073,6 +2133,9 @@ class WelltableApp(App):
         self.refresh_home()
 
     def toggle_meal(self, kind):
+        if kind == 'other':
+            self.popup_manual_meal('other')
+            return
         completed, item = self.store.toggle_meal_complete(kind)
         self._meal_flash_kind = kind if completed else ''
         if completed and item:
@@ -3085,8 +3148,11 @@ class WelltableApp(App):
         """Pick foods for just today, or carry the same choice into a saved set."""
         box = RoundedCard(orientation='vertical', spacing=dp(9), padding=dp(18), radius=dp(28),
                           background_color=[.035,.050,.085,.94], border_color=[.72,.82,1,.18])
-        header, dialog = self._dialog_header(f'{self.meal_names[meal_type]} 직접 선택',
-                                             '오늘만 적용하거나, 같은 구성으로 세트를 만들 수 있어요.')
+        is_other = meal_type == 'other'
+        header, dialog = self._dialog_header(
+            '기타 식단 추가' if is_other else f'{self.meal_names[meal_type]} 직접 선택',
+            '추가한 음식은 즉시 오늘의 영양에 반영돼요.' if is_other else '오늘만 적용하거나, 같은 구성으로 세트를 만들 수 있어요.'
+        )
         box.add_widget(header)
         # A meal can contain two identical portions.  Keep tap order and
         # duplicates rather than collapsing selections into a set.
@@ -3111,9 +3177,12 @@ class WelltableApp(App):
                       font_size=dp(10), color=(1,.62,.66,1), halign='center', text_size=(dp(274),dp(18)))
         box.add_widget(error)
         actions = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
-        choose_today = GlassButton(text='선택', font_size=dp(11), glass_color=(.15,.26,.44,.82), color=(.90,.95,1,1))
+        choose_today = GlassButton(text='추가' if is_other else '선택', font_size=dp(11), glass_color=(.15,.26,.44,.82), color=(.90,.95,1,1))
         save_set = GlassButton(text='세트로 저장', font_size=dp(11), glass_color=(.22,.40,.78,.84), color=(1,1,1,1))
-        actions.add_widget(choose_today); actions.add_widget(save_set); box.add_widget(actions)
+        actions.add_widget(choose_today)
+        if not is_other:
+            actions.add_widget(save_set)
+        box.add_widget(actions)
         popup = Popup(title='', content=box, size_hint=(.90,.82), background='', background_color=(0,0,0,0), separator_color=(0,0,0,0), overlay_color=(0,0,0,.66))
         dialog['popup'] = popup
         def render_selected():
@@ -3142,7 +3211,9 @@ class WelltableApp(App):
                 item.bind(on_release=add_portion); results.add_widget(item)
         def apply_today(_button):
             try:
-                saved = self.store.select_manual_meal(meal_type, selected)
+                saved = self.store.add_other_intake(selected) if is_other else self.store.select_manual_meal(meal_type, selected)
+                if is_other:
+                    self.write_health_nutrition(saved)
                 popup.dismiss(); self.refresh_all()
             except ValueError as exc:
                 error.text = str(exc)

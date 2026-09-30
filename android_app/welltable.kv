@@ -81,7 +81,7 @@
     height: dp(74)
     padding: dp(12), dp(8)
     spacing: dp(10)
-    on_release: app.toggle_meal(root.meal_type)
+    on_release: app.popup_manual_meal(root.meal_type) if root.direct_add else app.toggle_meal(root.meal_type)
     canvas.before:
         Color:
             rgba: (.10, .84, .74, .20) if root.completed else (0, 0, 0, 0)
