@@ -1,5 +1,5 @@
 {
-  "version": "2.3.3",
-  "notes": "[2.3.3 업데이트]\n\n• 식단 카드가 내부 취소·기록 버튼의 터치를 가로채던 문제를 수정했습니다. 기타 식단 취소 버튼이 정상적으로 동작합니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.3.3/welltable-2.3.3-arm64-v8a-debug.apk"
+  "version": "2.3.4",
+  "notes": "[2.3.4 업데이트]\n\n• 기타 식단 취소 버튼의 터치 처리 방식을 수정했습니다. 카드 내부 버튼을 직접 처리해 기타 식단 기록이 정상적으로 삭제됩니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.3.4/welltable-2.3.4-arm64-v8a-debug.apk"
 }

@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.3.3'
+APP_VERSION = '2.3.4'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1474,18 +1474,34 @@ class GoalTrendChart(Widget):
 class MealCard(ButtonBehavior, BoxLayout):
     title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); direct_add = BooleanProperty(False); cancel_other = BooleanProperty(False); glow = NumericProperty(0)
 
-    def on_touch_down(self, touch):
-        """Let the card's action buttons receive taps before the card itself.
+    def on_touch_up(self, touch):
+        """Handle nested action areas on the parent card's touch path.
 
-        ButtonBehavior precedes BoxLayout in this class's MRO, which otherwise
-        consumes every touch before the nested 취소/기록/+ controls see it.
+        ``MealCard`` is itself a ButtonBehavior, so Android routes a tap to
+        the parent before its child buttons.  Sending only touch-down to a
+        child (the earlier attempt) did not guarantee its release event.  This
+        handles the named child hit areas directly and consumes the card tap.
         """
         if self.collide_point(*touch.pos):
-            for control_id in ('done', 'add'):
-                control = self.ids.get(control_id)
-                if control and not control.disabled and control.collide_point(*touch.pos):
-                    return control.on_touch_down(touch)
-        return super().on_touch_down(touch)
+            done = self.ids.get('done')
+            add = self.ids.get('add')
+            app = App.get_running_app()
+            if done and not done.disabled and done.collide_point(*touch.pos):
+                self.state = 'normal'
+                if self.cancel_other:
+                    app.clear_other_intakes()
+                elif self.cafeteria:
+                    app.clear_cafeteria_meal(self.meal_type)
+                else:
+                    app.toggle_meal(self.meal_type)
+                touch.ungrab(self)
+                return True
+            if add and not add.disabled and add.collide_point(*touch.pos):
+                self.state = 'normal'
+                app.popup_manual_meal(self.meal_type)
+                touch.ungrab(self)
+                return True
+        return super().on_touch_up(touch)
 
 
 class MenuMarquee(StencilView):
