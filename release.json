@@ -1,5 +1,5 @@
 {
-  "version": "2.2.6",
-  "notes": "[2.2.6 업데이트]\n\n• 앱 번들에 포함된 Python 바이트코드 버전을 기기 실행 환경과 일치시켜 즉시 종료되는 문제를 수정했습니다.\n• 식약처 섭취 중량 입력과 실제 섭취량 영양정보 환산을 포함합니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.6/welltable-2.2.6-arm64-v8a-debug.apk"
+  "version": "2.2.7",
+  "notes": "[2.2.7 업데이트]\n\n• 식약처 검색 뒤 섭취 중량을 입력하거나 수정해도 칼로리·단백질·탄수화물·지방이 즉시 다시 환산됩니다.\n• 저장 직전에도 배수를 한 번 더 적용해 실제 섭취량 기준으로 저장합니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.7/welltable-2.2.7-arm64-v8a-debug.apk"
 }

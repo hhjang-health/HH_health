@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.2.6'
+APP_VERSION = '2.2.7'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -3349,6 +3349,42 @@ class WelltableApp(App):
                 raise ValueError('섭취 중량은 0보다 큰 숫자로 입력해 주세요.')
             return grams
 
+        # Keep the original 식약처 values separately.  People often search
+        # first and type or correct the actual eaten weight afterwards; the
+        # old one-shot calculation left those later changes unscaled.
+        search_base = {}
+
+        def apply_weight_scaling(show_status=True):
+            if not search_base:
+                return False
+            consumed_grams = requested_grams()
+            source_serving = str(search_base.get('serving') or '')
+            source_grams = serving_grams(source_serving)
+            multiplier = (consumed_grams / source_grams
+                          if consumed_grams and source_grams else 1.0)
+            for index, key in ((3, 'calories'), (4, 'protein'), (5, 'carbs'), (6, 'fat')):
+                value = search_base.get(key)
+                fields['inputs'][index].text = f'{float(value) * multiplier:g}' if value not in (None, '') else ''
+            fields['inputs'][7].text = f'{consumed_grams:g}g' if consumed_grams and source_grams else source_serving
+            if show_status:
+                if consumed_grams and source_grams:
+                    fields['error'].color = (.62,1,.82,1)
+                    fields['error'].text = f'식약처 1회 제공량 {source_grams:g}g 기준을 {multiplier:g}배로 적용했어요.'
+                elif consumed_grams:
+                    fields['error'].color = (1,.77,.43,1)
+                    fields['error'].text = '식약처 1회 제공량의 g 단위를 찾지 못해 영양정보는 원본 그대로예요.'
+            return bool(consumed_grams and source_grams)
+
+        def refresh_weight_scaling(_input, _value):
+            try:
+                apply_weight_scaling()
+            except ValueError:
+                # The numeric filter permits a transient empty field while
+                # someone edits; the final validation runs on search/save.
+                pass
+
+        intake_weight.bind(text=refresh_weight_scaling)
+
         def fill_from_search(_button):
             try:
                 query = fields['inputs'][0].text.strip()
@@ -3385,23 +3421,10 @@ class WelltableApp(App):
                 lookup.disabled = False
                 fields['inputs'][0].text = str(food.get('name') or query)
                 fields['inputs'][2].text = str(food.get('category') or '')
-                multiplier = 1.0
-                consumed_grams = requested_grams()
-                source_serving = str(food.get('serving') or '')
-                source_grams = serving_grams(source_serving)
-                if consumed_grams and source_grams:
-                    multiplier = consumed_grams / source_grams
-                for index, key in ((3, 'calories'), (4, 'protein'), (5, 'carbs'), (6, 'fat')):
-                    value = food.get(key)
-                    fields['inputs'][index].text = f'{float(value) * multiplier:g}' if value not in (None, '') else ''
-                fields['inputs'][7].text = f'{consumed_grams:g}g' if consumed_grams and source_grams else source_serving
-                fields['error'].color = (.62,1,.82,1)
-                if consumed_grams and source_grams:
-                    fields['error'].text = f'식약처 1회 제공량 {source_grams:g}g 기준을 {multiplier:g}배로 적용했어요.'
-                elif consumed_grams:
-                    fields['error'].color = (1,.77,.43,1)
-                    fields['error'].text = '식약처 1회 제공량의 g 단위를 찾지 못해 영양정보는 원본 그대로예요.'
-                else:
+                search_base.clear()
+                search_base.update(food)
+                if not apply_weight_scaling():
+                    fields['error'].color = (.62,1,.82,1)
                     fields['error'].text = '식약처 영양정보를 입력했어요. 제품 라벨과 한 번 더 확인해 주세요.'
 
             def show_lookup_error(message):
@@ -3416,6 +3439,8 @@ class WelltableApp(App):
         lookup.bind(on_release=fill_from_search)
         def save(_button):
             try:
+                # Always recalculate once more immediately before persistence.
+                apply_weight_scaling(show_status=False)
                 self.store.add_food(fields['inputs'][0].text, fields['inputs'][2].text,
                                     fields['inputs'][3].text, fields['inputs'][4].text,
                                     fields['inputs'][5].text, fields['inputs'][6].text,
