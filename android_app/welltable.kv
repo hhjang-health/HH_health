@@ -155,7 +155,7 @@
         font_name: app.font_name
         font_size: dp(9)
         pos_hint: {'center_y': .5}
-        on_release: app.clear_cafeteria_meal(root.meal_type) if root.cafeteria else app.toggle_meal(root.meal_type)
+        on_release: app.clear_other_intakes() if root.cancel_other else (app.clear_cafeteria_meal(root.meal_type) if root.cafeteria else app.toggle_meal(root.meal_type))
     GlassButton:
         id: add
         text: '+'

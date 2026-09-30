@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.3.0'
+APP_VERSION = '2.3.1'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -978,6 +978,11 @@ class Store:
         self.conn.commit()
         return item
 
+    def clear_other_intakes(self):
+        """Undo all of today's immediately-recorded 기타 식단 entries."""
+        self.conn.execute('DELETE FROM other_intakes WHERE intake_date=?', (date.today().isoformat(),))
+        self.conn.commit()
+
     def clear_cafeteria_meal(self, meal_type):
         """Return this meal to its ordinary saved set without touching others."""
         self.conn.execute('DELETE FROM cafeteria_selections WHERE meal_date=? AND meal_type=?',
@@ -1467,7 +1472,7 @@ class GoalTrendChart(Widget):
                 Ellipse(pos=(points[index] - dp(3), points[index + 1] - dp(3)), size=(dp(6), dp(6)))
 
 class MealCard(ButtonBehavior, BoxLayout):
-    title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); direct_add = BooleanProperty(False); glow = NumericProperty(0)
+    title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); direct_add = BooleanProperty(False); cancel_other = BooleanProperty(False); glow = NumericProperty(0)
 
 
 class MenuMarquee(StencilView):
@@ -1888,10 +1893,16 @@ class WelltableApp(App):
             protein=f"단백질 {sum(float(item.get('protein') or 0) for item in other_intakes):.1f}g" if other_intakes else '',
             color=[.72,.46,.18,.86], meal_type='other', badge='기타', divider=True,
             direct_add=True,
+            cancel_other=bool(other_intakes),
         )
-        other_card.ids.done.disabled = True
-        other_card.ids.done.opacity = 0
-        other_card.ids.done.width = 0
+        if other_intakes:
+            other_card.ids.done.text = '취소'
+            other_card.ids.done.glass_color = (.35,.14,.19,.88)
+            other_card.ids.done.color = (1,.77,.80,1)
+        else:
+            other_card.ids.done.disabled = True
+            other_card.ids.done.opacity = 0
+            other_card.ids.done.width = 0
         group.add_widget(other_card)
         box.add_widget(group)
         targets = self.store.profile()
@@ -2190,6 +2201,11 @@ class WelltableApp(App):
         if completed and item:
             self.write_health_nutrition(item)
         self.refresh_home()
+
+    def clear_other_intakes(self):
+        self.store.clear_other_intakes()
+        self.refresh_all()
+
     def choose_cafeteria_meal(self, meal_type, title, nutrition=None):
         selected = self.store.toggle_cafeteria_choice(meal_type, title, nutrition)
         self._cafeteria_flash = (meal_type, title) if selected else None
