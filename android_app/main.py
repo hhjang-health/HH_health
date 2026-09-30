@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.2.1'
+APP_VERSION = '2.2.2'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -3298,7 +3298,8 @@ class WelltableApp(App):
     def popup_add_food(self, on_saved=None):
         """Let people add their own packaged food or recipe to the library."""
         fields = self.form_popup('라이브러리에 음식 추가', [
-            ('음식 이름', '예: 내가 먹는 단백질 음료'), ('섭취 중량 (g)', '예: 200'),
+            ('음식 이름', '예: 내가 먹는 단백질 음료'),
+            ('섭취 중량 (g) · 식약처 환산용', '예: 200'),
             ('카테고리', '간편식 · 직접 추가'), ('열량 (kcal)', ''), ('단백질 (g)', ''),
             ('탄수화물 (g)', ''), ('지방 (g)', ''), ('1회 제공량', '예: 250ml'),
         ])
