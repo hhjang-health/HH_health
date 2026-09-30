@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.2.9'
+APP_VERSION = '2.3.0'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -463,6 +463,9 @@ class Store:
         self._ensure_column('profile', 'height_cm', 'REAL')
         self._ensure_column('profile', 'basal_kcal', 'REAL')
         self._ensure_column('cafeteria_selections', 'source', "TEXT DEFAULT 'cafeteria'")
+        # Built-in foods remain reference data; manually added foods can be
+        # removed from the library with a left swipe.
+        self._ensure_column('foods', 'is_custom', 'INTEGER DEFAULT 0')
         self._ensure_column('cafeteria_selections', 'completed', 'INTEGER DEFAULT 0')
         self.conn.execute('CREATE INDEX IF NOT EXISTS foods_name_index ON foods(name)')
         self.conn.execute('CREATE TABLE IF NOT EXISTS app_migrations(name TEXT PRIMARY KEY)')
@@ -594,9 +597,15 @@ class Store:
         values = [float(value) if str(value).strip() else 0.0 for value in (calories, protein, carbs, fat)]
         if any(value < 0 for value in values):
             raise ValueError('영양정보는 0 이상으로 입력해 주세요.')
-        self.conn.execute('INSERT INTO foods(name,category,calories,protein,carbs,fat,serving) VALUES(?,?,?,?,?,?,?)',
+        self.conn.execute('INSERT INTO foods(name,category,calories,protein,carbs,fat,serving,is_custom) VALUES(?,?,?,?,?,?,?,1)',
                           (name.strip(), category.strip() or '내 음식', *values, serving.strip() or '1회 제공량'))
         self.conn.commit()
+
+    def delete_custom_food(self, food_id):
+        """Remove only a food created on this device."""
+        result = self.conn.execute('DELETE FROM foods WHERE id=? AND is_custom=1', (food_id,))
+        self.conn.commit()
+        return bool(result.rowcount)
 
     def save_set(self, title, meal_type, food_ids, set_id=None):
         if not title.strip() or not food_ids:
@@ -617,7 +626,7 @@ class Store:
     def meal_set(self, row):
         item = dict(row); ids = json.loads(item['food_ids'])
         rows = self.conn.execute("SELECT * FROM foods WHERE id IN (%s)" % ','.join('?'*len(ids)), ids).fetchall()
-        lookup = {r['id']:dict(r) for r in rows}; foods = [lookup[i] for i in ids]
+        lookup = {r['id']:dict(r) for r in rows}; foods = [lookup[i] for i in ids if i in lookup]
         item['foods'] = foods
         item['calories'] = round(sum(x['calories'] for x in foods))
         item['protein'] = round(sum(x['protein'] for x in foods),1)
@@ -1310,6 +1319,9 @@ class GlassInput(TextInput):
     def _apply_value_color(self, _dt=0):
         self.foreground_color = self._value_white
         self.disabled_foreground_color = self._value_white
+        # Samsung themes can reset placeholder examples to foreground white
+        # after a popup opens. Values remain white; hints stay muted.
+        self.hint_text_color = (.52, .58, .70, 1)
         self.cursor_color = (.78, .88, 1, 1)
 
     def on_text(self, *_args):
@@ -1521,6 +1533,43 @@ class SwipeWorkout(ListLine):
             self.tail = self._original_tail
             self.swipe_offset = 0
         self._start_x = 0
+        return super().on_touch_up(touch)
+
+
+class SwipeFood(GlassButton):
+    """Tap to add a food; swipe a user-created one left to delete it."""
+    food_id = NumericProperty(0)
+    is_custom = BooleanProperty(False)
+    _start_x = NumericProperty(0)
+    _original_text = StringProperty('')
+    swipe_offset = NumericProperty(0)
+
+    def on_touch_down(self, touch):
+        if self.is_custom and self.collide_point(*touch.pos):
+            self._start_x = touch.x
+            self._original_text = self.text
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._start_x:
+            self.swipe_offset = min(0, max(-dp(132), touch.x - self._start_x))
+            self.text = ('← 놓으면 라이브러리에서 삭제합니다'
+                         if self.swipe_offset < -dp(60) else self._original_text)
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        should_delete = self._start_x and self.swipe_offset < -dp(112)
+        self._start_x = 0
+        self.swipe_offset = 0
+        if should_delete:
+            app = App.get_running_app()
+            if app.delete_library_food(self.food_id):
+                callback = getattr(self, 'on_food_deleted', None)
+                if callable(callback):
+                    callback()
+            return True
+        if self._original_text:
+            self.text = self._original_text
         return super().on_touch_up(touch)
 class MealSetLine(ListLine):
     meal_set_id = NumericProperty(0)
@@ -2433,6 +2482,12 @@ class WelltableApp(App):
         self.store.delete_workout(workout_id)
         self.refresh_all()
 
+    def delete_library_food(self, food_id):
+        deleted = self.store.delete_custom_food(food_id)
+        if deleted:
+            self.refresh_all()
+        return deleted
+
     @staticmethod
     def _menu_text(markdown):
         """Preserve Welstory corner names instead of flattening them to one line.
@@ -3201,14 +3256,20 @@ class WelltableApp(App):
                 return
             for food in foods:
                 amount = selected.count(food['id'])
-                item = GlassButton(text=f"{'✓ ' + str(amount) + '개  ' if amount else '+  '}{food['name']}  ·  {food['calories']} kcal\n{food['category']} · 단백질 {food['protein']}g · {food['serving']}",
+                item = SwipeFood(food_id=food['id'], is_custom=bool(food.get('is_custom')), text=f"{'✓ ' + str(amount) + '개  ' if amount else '+  '}{food['name']}  ·  {food['calories']} kcal\n{food['category']} · 단백질 {food['protein']}g · {food['serving']}",
                                    size_hint_y=None, height=dp(54), font_size=dp(10), halign='left',
                                    glass_color=(.20,.38,.70,.82) if amount else (.10,.14,.21,.64),
                                    color=(.94,.97,1,1))
                 def add_portion(_button, food_id=food['id']):
                     selected.append(food_id)
                     render_selected(); render_foods(search.text)
-                item.bind(on_release=add_portion); results.add_widget(item)
+                item.bind(on_release=add_portion)
+                def remove_deleted_food(food_id=food['id']):
+                    selected[:] = [item_id for item_id in selected if item_id != food_id]
+                    food_lookup.pop(food_id, None)
+                    render_selected(); render_foods(search.text)
+                item.on_food_deleted = remove_deleted_food
+                results.add_widget(item)
         def apply_today(_button):
             try:
                 saved = self.store.add_other_intake(selected) if is_other else self.store.select_manual_meal(meal_type, selected)
@@ -3331,7 +3392,7 @@ class WelltableApp(App):
                 return
             for food in foods:
                 amount = selected.count(food['id'])
-                button = GlassButton(text=f"{'✓ ' + str(amount) + '개  ' if amount else '+  '}{food['name']}\n{food['category']}  ·  {food['calories']} kcal  ·  단백질 {food['protein']}g  ·  {food['serving']}",
+                button = SwipeFood(food_id=food['id'], is_custom=bool(food.get('is_custom')), text=f"{'✓ ' + str(amount) + '개  ' if amount else '+  '}{food['name']}\n{food['category']}  ·  {food['calories']} kcal  ·  단백질 {food['protein']}g  ·  {food['serving']}",
                                      font_name=self.font_name, font_size=dp(12), halign='left', valign='middle', text_size=(dp(250), dp(48)),
                                      glass_color=(.15,.50,.42,.84) if amount else (.060,.075,.115,.96),
                                      color=(.96,.98,1,1), size_hint_y=None, height=dp(70), padding=[dp(12), dp(5)])
@@ -3341,6 +3402,11 @@ class WelltableApp(App):
                     render_selected()
                     render_foods(search.text)
                 button.bind(on_release=add_food_portion)
+                def remove_deleted_food(food_id=food['id']):
+                    selected[:] = [item_id for item_id in selected if item_id != food_id]
+                    food_lookup.pop(food_id, None)
+                    render_selected(); render_foods(search.text)
+                button.on_food_deleted = remove_deleted_food
                 list_box.add_widget(button)
         render_selected()
         render_foods()
@@ -3411,6 +3477,22 @@ class WelltableApp(App):
                 grams = None
             return grams if grams and grams > 0 else None
 
+        def source_serving_grams(food):
+            """Prefer the numeric MFDS serving field over its display label.
+
+            The public API frequently returns ``SERVING_SIZE: 100`` without a
+            g suffix. The old code only parsed labels such as ``100g``, so a
+            valid 200 g intake incorrectly stayed at the original nutrients.
+            """
+            for key in ('serving_grams', 'servingGrams', 'serving_size', 'servingSize'):
+                try:
+                    grams = float(food.get(key))
+                    if grams > 0:
+                        return grams
+                except (TypeError, ValueError):
+                    pass
+            return serving_grams(food.get('serving'))
+
         def requested_grams():
             raw = intake_weight.text.strip()
             if not raw:
@@ -3430,7 +3512,7 @@ class WelltableApp(App):
                 return False
             consumed_grams = requested_grams()
             source_serving = str(search_base.get('serving') or '')
-            source_grams = serving_grams(source_serving)
+            source_grams = source_serving_grams(search_base)
             multiplier = (consumed_grams / source_grams
                           if consumed_grams and source_grams else 1.0)
             for index, key in ((3, 'calories'), (4, 'protein'), (5, 'carbs'), (6, 'fat')):

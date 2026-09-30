@@ -27,6 +27,9 @@ def first(item, *keys):
     return None
 
 def normalize(item):
+    # MFDS commonly returns a bare numeric SERVING_SIZE (for example ``100``),
+    # not ``100g``. Keep it separately so a client can scale reliably.
+    serving_value = first(item, "SERVING_SIZE", "SERVING_WT", "FOOD_SIZE")
     return {
         "name": first(item, "FOOD_NM_KR", "FOOD_NM") or "이름 미제공",
         "manufacturer": first(item, "MAKER_NM") or "",
@@ -35,7 +38,8 @@ def normalize(item):
         "protein": number(first(item, "AMT_NUM3", "PROTEIN", "PROCNT")),
         "fat": number(first(item, "AMT_NUM4", "FAT", "FATCE")),
         "carbs": number(first(item, "AMT_NUM6", "CARBOHYDRATE", "CHOCDF")),
-        "serving": str(first(item, "SERVING_SIZE", "SERVING_WT", "FOOD_SIZE") or ""),
+        "serving": str(serving_value or ""),
+        "serving_grams": number(serving_value),
         "source": "식품의약품안전처 식품영양성분DB",
     }
 
