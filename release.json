@@ -1,5 +1,5 @@
 {
-  "version": "2.3.2",
-  "notes": "[2.3.2 업데이트]\n\n• 기타 식단 취소 버튼을 누른 뒤 식단 추가 창이 다시 열리는 문제를 수정했습니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.3.2/welltable-2.3.2-arm64-v8a-debug.apk"
+  "version": "2.3.3",
+  "notes": "[2.3.3 업데이트]\n\n• 식단 카드가 내부 취소·기록 버튼의 터치를 가로채던 문제를 수정했습니다. 기타 식단 취소 버튼이 정상적으로 동작합니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.3.3/welltable-2.3.3-arm64-v8a-debug.apk"
 }

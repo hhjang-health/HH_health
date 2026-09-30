@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.3.2'
+APP_VERSION = '2.3.3'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1473,6 +1473,19 @@ class GoalTrendChart(Widget):
 
 class MealCard(ButtonBehavior, BoxLayout):
     title = StringProperty(''); foods = StringProperty(''); calories = StringProperty(''); protein = StringProperty(''); color = ListProperty([.8,.95,.85,1]); meal_type=StringProperty(''); badge=StringProperty(''); divider = BooleanProperty(False); cafeteria = BooleanProperty(False); completed = BooleanProperty(False); direct_add = BooleanProperty(False); cancel_other = BooleanProperty(False); glow = NumericProperty(0)
+
+    def on_touch_down(self, touch):
+        """Let the card's action buttons receive taps before the card itself.
+
+        ButtonBehavior precedes BoxLayout in this class's MRO, which otherwise
+        consumes every touch before the nested 취소/기록/+ controls see it.
+        """
+        if self.collide_point(*touch.pos):
+            for control_id in ('done', 'add'):
+                control = self.ids.get(control_id)
+                if control and not control.disabled and control.collide_point(*touch.pos):
+                    return control.on_touch_down(touch)
+        return super().on_touch_down(touch)
 
 
 class MenuMarquee(StencilView):
