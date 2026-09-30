@@ -1,5 +1,5 @@
 {
-  "version": "2.2.3",
-  "notes": "[2.2.3 업데이트]\n\n• 설치 패키지 구조를 복구해 기존 앱을 삭제하지 않고 업데이트할 수 있도록 수정했습니다.\n• 수동 음식 추가 창 상단의 식약처 환산용 섭취 중량(g) 입력칸과 2.2.3 버전 표기를 적용했습니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.3/welltable-2.2.3-arm64-v8a-debug.apk"
+  "version": "2.2.4",
+  "notes": "[2.2.4 업데이트]\n\n• Kivy 앱 번들을 원본과 동일한 USTAR 형식으로 재생성해 시작 오류를 수정했습니다.\n• 기존 앱을 삭제하지 않고 설치 가능한 Android 버전과 식약처 섭취 중량 입력 기능을 포함합니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.4/welltable-2.2.4-arm64-v8a-debug.apk"
 }
