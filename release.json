@@ -1,5 +1,5 @@
 {
-  "version": "2.2.4",
-  "notes": "[2.2.4 업데이트]\n\n• Kivy 앱 번들을 원본과 동일한 USTAR 형식으로 재생성해 시작 오류를 수정했습니다.\n• 기존 앱을 삭제하지 않고 설치 가능한 Android 버전과 식약처 섭취 중량 입력 기능을 포함합니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.4/welltable-2.2.4-arm64-v8a-debug.apk"
+  "version": "2.2.5",
+  "notes": "[2.2.5 업데이트]\n\n• 앱 시작 번들의 파일 권한·소유자·시간 메타데이터를 원본과 동일하게 복원해 즉시 종료되는 문제를 수정했습니다.\n• 식약처 섭취 중량 입력과 실제 섭취량 영양정보 환산을 포함합니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.5/welltable-2.2.5-arm64-v8a-debug.apk"
 }
