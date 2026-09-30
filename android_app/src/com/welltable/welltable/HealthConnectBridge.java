@@ -59,6 +59,10 @@ import kotlinx.coroutines.CoroutineScope;
 public final class HealthConnectBridge {
     private static final int REQUEST_CODE = 48126;
     private static volatile String lastSyncJson = "{\"state\":\"idle\"}";
+    // Nutrition writes happen from the meal-completion action.  Keep the
+    // latest failure available to the Python UI instead of silently dropping
+    // a user-confirmed record.
+    private static volatile String lastNutritionWriteError = "";
 
     private HealthConnectBridge() { }
 
@@ -233,15 +237,34 @@ public final class HealthConnectBridge {
     public static boolean writeNutrition(Activity activity, String title, double calories,
                                          double protein, double carbs) {
         try {
+            lastNutritionWriteError = "";
+            String availability = availability(activity);
+            if (!"available".equals(availability)) {
+                lastNutritionWriteError = "Health Connect를 사용할 수 없습니다.";
+                return false;
+            }
             HealthConnectClient client = HealthConnectClient.getOrCreate(activity);
-            if (!grantedPermissions(client).contains("android.permission.health.WRITE_NUTRITION")) return false;
-            Instant now = Instant.now();
-            ZoneOffset offset = ZoneId.systemDefault().getRules().getOffset(now);
+            if (!grantedPermissions(client).contains("android.permission.health.WRITE_NUTRITION")) {
+                lastNutritionWriteError = "Health Connect의 식단 쓰기 권한이 필요합니다.";
+                return false;
+            }
+            // NutritionRecord is an interval record: Health Connect rejects
+            // records whose start and end instants are identical.  The former
+            // implementation used `now` for both, then swallowed that error.
+            Instant end = Instant.now();
+            Instant start = end.minus(1, ChronoUnit.SECONDS);
+            ZoneOffset offset = ZoneId.systemDefault().getRules().getOffset(end);
             insert(client, Collections.<Record>singletonList(createNutritionRecord(
-                    now, offset, title, calories, protein, carbs)));
+                    start, end, offset, title, calories, protein, carbs)));
             return true;
-        } catch (Exception ignored) { return false; }
+        } catch (Exception exception) {
+            lastNutritionWriteError = exception.getMessage() == null
+                    ? "식단 기록 저장 중 오류가 발생했습니다." : exception.getMessage();
+            return false;
+        }
     }
+
+    public static String getLastNutritionWriteError() { return lastNutritionWriteError; }
 
     /** Write only a workout the user directly records in this app. */
     public static boolean writeWorkout(Activity activity, String title, int minutes) {
@@ -484,7 +507,7 @@ public final class HealthConnectBridge {
      * Java, but not the newer Builder API.  Locate that stable 49-argument
      * constructor and explicitly fill only the nutrients this app owns.
      */
-    private static NutritionRecord createNutritionRecord(Instant now, ZoneOffset offset,
+    private static NutritionRecord createNutritionRecord(Instant start, Instant end, ZoneOffset offset,
                                                           String title, double calories,
                                                           double protein, double carbs) throws Exception {
         Constructor<?> selected = null;
@@ -496,7 +519,7 @@ public final class HealthConnectBridge {
         }
         if (selected == null) throw new IllegalStateException("NutritionRecord constructor unavailable");
         Object[] values = new Object[49];
-        values[0] = now; values[1] = offset; values[2] = now; values[3] = offset;
+        values[0] = start; values[1] = offset; values[2] = end; values[3] = offset;
         // The first 42 nutrient positions are nullable. Energy is #4,
         // protein #24, and total carbohydrate #31 in the SDK constructor.
         values[7] = Energy.kilocalories(Math.max(0d, calories));

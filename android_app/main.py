@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.2.7'
+APP_VERSION = '2.2.8'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -3660,12 +3660,16 @@ class WelltableApp(App):
             from jnius import autoclass
             Activity = autoclass('org.kivy.android.PythonActivity')
             Bridge = autoclass('com.welltable.welltable.HealthConnectBridge')
-            Bridge.writeNutrition(Activity.mActivity, str(item.get('title') or '식단 기록'),
-                                  float(item.get('calories') or 0),
-                                  float(item.get('protein') or 0), float(item.get('carbs') or 0))
-        except Exception:
-            # Local recording is never blocked by a declined write permission.
-            pass
+            saved = Bridge.writeNutrition(Activity.mActivity, str(item.get('title') or '식단 기록'),
+                                           float(item.get('calories') or 0),
+                                           float(item.get('protein') or 0), float(item.get('carbs') or 0))
+            if not saved:
+                message = str(Bridge.getLastNutritionWriteError() or 'Health Connect에 식단 기록을 저장하지 못했어요.')
+                self._health_notice('Health Connect 식단 기록 저장 실패', message)
+        except Exception as exc:
+            # Keep local meal completion independent, while making a bridge
+            # failure visible instead of losing the Health Connect write.
+            self._health_notice('Health Connect 식단 기록 저장 실패', str(exc) or '식단 기록을 저장하지 못했어요.')
 
     def write_health_workout(self, title, minutes):
         """Mirror only a workout the user intentionally records here."""
