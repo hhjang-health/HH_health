@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.2.0'
+APP_VERSION = '2.2.1'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -3298,10 +3298,16 @@ class WelltableApp(App):
     def popup_add_food(self, on_saved=None):
         """Let people add their own packaged food or recipe to the library."""
         fields = self.form_popup('라이브러리에 음식 추가', [
-            ('음식 이름', '예: 내가 먹는 단백질 음료'), ('카테고리', '간편식 · 직접 추가'),
-            ('열량 (kcal)', ''), ('단백질 (g)', ''), ('탄수화물 (g)', ''), ('지방 (g)', ''), ('1회 제공량', '예: 250ml'),
+            ('음식 이름', '예: 내가 먹는 단백질 음료'), ('섭취 중량 (g)', '예: 200'),
+            ('카테고리', '간편식 · 직접 추가'), ('열량 (kcal)', ''), ('단백질 (g)', ''),
+            ('탄수화물 (g)', ''), ('지방 (g)', ''), ('1회 제공량', '예: 250ml'),
         ])
         popup = fields['popup']
+        # Keep the intake-weight field at the top.  It is intentionally kept
+        # outside the saved food schema: the saved serving label below becomes
+        # the actual eaten amount when an MFDS result can be scaled by grams.
+        intake_weight = fields['inputs'][1]
+        intake_weight.input_filter = 'float'
         # The lookup lives beside the first field's title, not at the bottom
         # of the form. It uses the Render proxy, so the Food Safety Korea key
         # is never present on a person's device.
@@ -3324,11 +3330,30 @@ class WelltableApp(App):
         fields['error'].height = dp(22)
         fields['box'].add_widget(fields['error'], index=first_input_index + 1)
 
+        def serving_grams(value):
+            """Read a gram quantity from Food Safety Korea's serving label."""
+            match = re.search(r'(\d+(?:\.\d+)?)\s*(?:g|그램)', str(value or ''), re.I)
+            try:
+                grams = float(match.group(1)) if match else None
+            except (AttributeError, ValueError):
+                grams = None
+            return grams if grams and grams > 0 else None
+
+        def requested_grams():
+            raw = intake_weight.text.strip()
+            if not raw:
+                return None
+            grams = float(raw)
+            if grams <= 0:
+                raise ValueError('섭취 중량은 0보다 큰 숫자로 입력해 주세요.')
+            return grams
+
         def fill_from_search(_button):
             try:
                 query = fields['inputs'][0].text.strip()
                 if not query:
                     raise ValueError('먼저 음식 이름을 입력해 주세요.')
+                requested_grams()
                 lookup.disabled = True
                 fields['error'].color = (.62,.78,1,1)
                 fields['error'].text = '식약처 영양정보를 검색 중이에요…'
@@ -3358,13 +3383,25 @@ class WelltableApp(App):
             def fill_fields(food):
                 lookup.disabled = False
                 fields['inputs'][0].text = str(food.get('name') or query)
-                fields['inputs'][1].text = str(food.get('category') or '')
-                for index, key in ((2, 'calories'), (3, 'protein'), (4, 'carbs'), (5, 'fat')):
+                fields['inputs'][2].text = str(food.get('category') or '')
+                multiplier = 1.0
+                consumed_grams = requested_grams()
+                source_serving = str(food.get('serving') or '')
+                source_grams = serving_grams(source_serving)
+                if consumed_grams and source_grams:
+                    multiplier = consumed_grams / source_grams
+                for index, key in ((3, 'calories'), (4, 'protein'), (5, 'carbs'), (6, 'fat')):
                     value = food.get(key)
-                    fields['inputs'][index].text = f'{float(value):g}' if value not in (None, '') else ''
-                fields['inputs'][6].text = str(food.get('serving') or '')
+                    fields['inputs'][index].text = f'{float(value) * multiplier:g}' if value not in (None, '') else ''
+                fields['inputs'][7].text = f'{consumed_grams:g}g' if consumed_grams and source_grams else source_serving
                 fields['error'].color = (.62,1,.82,1)
-                fields['error'].text = '식약처 영양정보를 입력했어요. 제품 라벨과 한 번 더 확인해 주세요.'
+                if consumed_grams and source_grams:
+                    fields['error'].text = f'식약처 1회 제공량 {source_grams:g}g 기준을 {multiplier:g}배로 적용했어요.'
+                elif consumed_grams:
+                    fields['error'].color = (1,.77,.43,1)
+                    fields['error'].text = '식약처 1회 제공량의 g 단위를 찾지 못해 영양정보는 원본 그대로예요.'
+                else:
+                    fields['error'].text = '식약처 영양정보를 입력했어요. 제품 라벨과 한 번 더 확인해 주세요.'
 
             def show_lookup_error(message):
                 lookup.disabled = False
@@ -3378,10 +3415,10 @@ class WelltableApp(App):
         lookup.bind(on_release=fill_from_search)
         def save(_button):
             try:
-                self.store.add_food(fields['inputs'][0].text, fields['inputs'][1].text,
-                                    fields['inputs'][2].text, fields['inputs'][3].text,
-                                    fields['inputs'][4].text, fields['inputs'][5].text,
-                                    fields['inputs'][6].text)
+                self.store.add_food(fields['inputs'][0].text, fields['inputs'][2].text,
+                                    fields['inputs'][3].text, fields['inputs'][4].text,
+                                    fields['inputs'][5].text, fields['inputs'][6].text,
+                                    fields['inputs'][7].text)
                 popup.dismiss()
                 if on_saved: on_saved()
             except (ValueError, sqlite3.IntegrityError) as exc:
