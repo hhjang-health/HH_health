@@ -1,0 +1,5 @@
+{
+  "version": "2.2.1",
+  "notes": "[2.2.1 업데이트]\n\n• 식약처 검색 결과에 섭취 중량(g)을 입력할 수 있습니다.\n• 입력한 중량과 식약처 1회 제공량(g)을 비교해 칼로리·단백질·탄수화물·지방을 자동 환산해 저장합니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.1/welltable-2.2.1-arm64-v8a-debug.apk"
+}

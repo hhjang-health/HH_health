@@ -1,4 +1,5 @@
 import json, os, ssl, time
+from pathlib import Path
 from collections import defaultdict, deque
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -140,6 +141,13 @@ def nutrition_search():
 
 @app.get("/api/app-update")
 def app_update():
+    manifest_path = Path(__file__).with_name("release.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if all(key in manifest for key in ("version", "notes", "apk_url")):
+            return jsonify(manifest)
+    except (OSError, json.JSONDecodeError):
+        pass
     return jsonify(version=os.environ.get("APP_RELEASE_VERSION", "0.0.0"), notes=os.environ.get("APP_RELEASE_NOTES", ""), apk_url=os.environ.get("APP_RELEASE_APK_URL", ""))
 
 if __name__ == "__main__":
