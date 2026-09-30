@@ -1,5 +1,5 @@
 {
-  "version": "2.2.2",
-  "notes": "[2.2.2 업데이트]\n\n• 수동 음식 추가 창 상단에 식약처 환산용 섭취 중량(g) 입력칸을 표시합니다.\n• 식약처 1회 제공량을 기준으로 섭취 중량에 맞춰 영양정보를 자동 환산합니다.\n• 앱 내부 버전과 설치용 Android 버전을 함께 2.2.2로 맞췄습니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.2/welltable-2.2.2-arm64-v8a-debug.apk"
+  "version": "2.2.3",
+  "notes": "[2.2.3 업데이트]\n\n• 설치 패키지 구조를 복구해 기존 앱을 삭제하지 않고 업데이트할 수 있도록 수정했습니다.\n• 수동 음식 추가 창 상단의 식약처 환산용 섭취 중량(g) 입력칸과 2.2.3 버전 표기를 적용했습니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.2.3/welltable-2.2.3-arm64-v8a-debug.apk"
 }
