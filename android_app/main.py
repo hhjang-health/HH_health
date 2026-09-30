@@ -53,7 +53,7 @@ if os.environ.get('WELLTABLE_PREVIEW'):
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_VERSION = '2.3.1'
+APP_VERSION = '2.3.2'
 
 # Public service only.  The Food Safety Korea credential stays in Render's
 # environment and is never included in the APK or requested from end users.
@@ -1899,6 +1899,9 @@ class WelltableApp(App):
             other_card.ids.done.text = '취소'
             other_card.ids.done.glass_color = (.35,.14,.19,.88)
             other_card.ids.done.color = (1,.77,.80,1)
+            other_card.ids.done.disabled = False
+            other_card.ids.done.opacity = 1
+            other_card.ids.done.width = dp(44)
         else:
             other_card.ids.done.disabled = True
             other_card.ids.done.opacity = 0
@@ -2194,6 +2197,11 @@ class WelltableApp(App):
 
     def toggle_meal(self, kind):
         if kind == 'other':
+            # The cancel button lives inside a tappable MealCard.  Its release
+            # event may be followed by the parent-card release, which used to
+            # reopen the add dialog immediately after clearing the records.
+            if getattr(self, '_skip_other_card_open', False):
+                return
             self.popup_manual_meal('other')
             return
         completed, item = self.store.toggle_meal_complete(kind)
@@ -2203,8 +2211,10 @@ class WelltableApp(App):
         self.refresh_home()
 
     def clear_other_intakes(self):
+        self._skip_other_card_open = True
         self.store.clear_other_intakes()
         self.refresh_all()
+        Clock.schedule_once(lambda _dt: setattr(self, '_skip_other_card_open', False), .15)
 
     def choose_cafeteria_meal(self, meal_type, title, nutrition=None):
         selected = self.store.toggle_cafeteria_choice(meal_type, title, nutrition)

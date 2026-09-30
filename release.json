@@ -1,5 +1,5 @@
 {
-  "version": "2.3.1",
-  "notes": "[2.3.1 업데이트]\n\n• 기타 식단에 취소 버튼을 추가했습니다. 오늘 추가한 기타 식단 기록을 한 번에 되돌릴 수 있습니다.",
-  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.3.1/welltable-2.3.1-arm64-v8a-debug.apk"
+  "version": "2.3.2",
+  "notes": "[2.3.2 업데이트]\n\n• 기타 식단 취소 버튼을 누른 뒤 식단 추가 창이 다시 열리는 문제를 수정했습니다.",
+  "apk_url": "https://github.com/hhjang-health/HH_health/releases/download/v2.3.2/welltable-2.3.2-arm64-v8a-debug.apk"
 }
